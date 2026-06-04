@@ -15,8 +15,8 @@ CREATE TABLE books (
     
     -- Core metadata 
     title TEXT NOT NULL,
-    author TEXT,
-    isbn TEXT,
+    authors TEXT[],
+    isbn TEXT[],
     publisher TEXT,
     published_year INT,
     edition TEXT,
@@ -26,7 +26,7 @@ CREATE TABLE books (
     cover_url TEXT,
     
     -- Category data 
-    category TEXT[],
+    categories TEXT[],
     
     -- Lightweight precomputed aggregates 
     total_copies INT DEFAULT 0,
@@ -35,12 +35,12 @@ CREATE TABLE books (
     mat_copies INT DEFAULT 0,
     
     -- Sync metadata 
-    metadata_synced_at TIMESTAMP,
-    availability_synced_at TIMESTAMP,
+    metadata_synced_at TIMESTAMPZ,
+    availability_synced_at TIMESTAMPZ,
     
      -- Audit fields 
-     created_at TIMESTAMP DEFAULT NOW(),
-     updated_at TIMESTAMP DEFAULT NOW()
+     created_at TIMESTAMPZ DEFAULT NOW(),
+     updated_at TIMESTAMPZ DEFAULT NOW()
 );
 ```
 
@@ -65,15 +65,16 @@ CREATE TABLE books_copies (
         ON DELETE CASCADE,
 
     branch TEXT NOT NULL,
-    acquisition_date TIMESTAMP, -- Debatable field
+    acquisition_date TIMESTAMPZ, -- Debatable field
 
     -- Display Fields
     callnumber TEXT,
-    available BOOLEAN NOT NULL DEFAULT TRUE,
+    -- use status instead of availability, we can know if it is checked out
+    status VARCHAR(50) NOT NULL,
 
     -- Audit Fields
-    updated_at TIMESTAMP DEFAULT NOW(),
-	last_seen_at TIMESTAMP DEFAULT NOW()
+    updated_at TIMESTAMPZ DEFAULT NOW(),
+	last_seen_at TIMESTAMPZ DEFAULT NOW()
 );
 ```
 
