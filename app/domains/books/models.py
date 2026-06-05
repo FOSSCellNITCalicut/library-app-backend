@@ -2,6 +2,10 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy.orm import sessionmaker
 from datetime import datetime, timezone
+from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy.dialects.postgresql import TSVECTOR
+from sqlalchemy import Index
+
 from sqlalchemy import (
     BigInteger,
     String,
@@ -10,8 +14,6 @@ from sqlalchemy import (
     ForeignKey,
     DateTime
 )
-from sqlalchemy.dialects.postgresql import ARRAY
-
 from sqlalchemy.orm import (
     Mapped,
     mapped_column,
@@ -45,8 +47,8 @@ class Book(Base):
         Text,
         nullable=False
     )
-        #authors can be multiple
-    author: Mapped[list[str] | None] = mapped_column (
+        #authors can be multiple(change to authors in next migration)
+    authors: Mapped[list[str] | None] = mapped_column (
         ARRAY(String),
         nullable=True
     )
@@ -87,22 +89,26 @@ class Book(Base):
     # Aggregates
     total_copies: Mapped[int] = mapped_column (
         Integer,
-        default=0
+        nullable=False,
+        server_default="0"
     )
 
     available_copies: Mapped[int] = mapped_column (
         Integer,
-        default=0
+        nullable=False,
+        server_default="0"
     )
 
     lib_copies: Mapped[int] = mapped_column (
         Integer,
-        default=0
+        nullable=False,
+        server_default="0"
     )
 
     mat_copies: Mapped[int] = mapped_column (
         Integer,
-        default=0
+        nullable=False,
+        server_default="0"
     )
 
     # metadata sync
@@ -126,11 +132,23 @@ class Book(Base):
         onupdate=lambda: datetime.now(timezone.utc)
     )
 
+    search_vector: Mapped[str | None] = mapped_column(
+    TSVECTOR
+    )
+
     #Relationship with BookCopy
     copies: Mapped[list["BookCopy"]] = relationship (
         back_populates="book",
         cascade="all, delete-orphan"  
     )
+    #GIN index
+    __table_args__ = (
+    Index(
+        "ix_books_search_vector",
+        "search_vector",
+        postgresql_using="gin"
+    ),
+)
 
 class BookCopy(Base):
     __tablename__ = "book_copies"
