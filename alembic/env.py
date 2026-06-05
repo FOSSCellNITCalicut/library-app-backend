@@ -4,12 +4,7 @@ from sqlalchemy import engine_from_config
 from sqlalchemy import pool
 
 from alembic import context
-from app.domains.books.models import Base, Book, BookCopy
-
-
-
-
-
+from app.db.models import *
 
 
 # this is the Alembic Config object, which provides
