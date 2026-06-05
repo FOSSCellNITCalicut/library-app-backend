@@ -10,13 +10,14 @@ engine = create_async_engine(
     DATABASE_URL, 
     pool_size=20,
     max_overflow=10,
-    echo=True
+    echo=False
 )
 
 AsyncSessionLocal = async_sessionmaker(
     bind=engine,
     autoflush=False,
-    autocommit = False
+    autocommit=False,
+    expire_on_commit=False,
 )
 
 class Base(DeclarativeBase):

@@ -222,13 +222,13 @@ while True:
 
 This facilitates easier retries, better Koha friendliness and also removes the need for gathering networking requests.
 
-This also requires the need for maintaining a separate `sync_state` table, in case of failures, system restarts, network error etc. 
+This also requires the need for maintaining a separate `sync_state` table, in case of failures, system restarts, network error etc. There is one row per worker, keyed by `worker_name`:
 ```sql
 CREATE TABLE sync_state (
     worker_name TEXT PRIMARY KEY,
-    current_page INT NOT NULL,
-    last_completed_at TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT NOW()
+    current_page INT NOT NULL DEFAULT 1,
+    last_completed_at TIMESTAMPTZ,
+    updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 ```
 
@@ -284,9 +284,7 @@ For each item:
         ↓
 Upsert into books_copies
         ↓
-GROUP BY biblio_id
-        ↓
-(trigger automatically updates books table)
+DB trigger recomputes books.total_copies / available_copies / lib_copies / mat_copies
 ```
 
 This is better than hitting `/api/v1/public/biblios/{id}/items` because we will introduce N+1 during syncing itself.
@@ -329,7 +327,7 @@ This guarantees rapid visibility for newly added books while preserving rolling 
 
 - An explicit **Sync Failure Policy** and **Index Strategies** should be added to the documentation soon.
 
-- Retries must use exponential backoff.
+- **Implemented**: Retries use exponential backoff with a dead-letter after `MAX_METADATA_RETRIES` (default 5). On the `(retry_count)`th retry, the job is re-scheduled at `now() + 2^retry_count` seconds, capped at 3600s. On the `MAX_METADATA_RETRIES`th failure the job is moved to `status='failed'` and is never re-tried.
 
 ---
 
