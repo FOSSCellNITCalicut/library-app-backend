@@ -14,7 +14,19 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-database_url = os.environ.get("DATABASE_URL", settings.DATABASE_URL)
+
+def _sync_url(url: str) -> str:
+    """Alembic runs synchronously; swap asyncpg → psycopg2."""
+    if url.startswith("postgresql+asyncpg://"):
+        return "postgresql+psycopg2://" + url[len("postgresql+asyncpg://"):]
+    if url.startswith("postgresql+psycopg://"):
+        return "postgresql+psycopg2://" + url[len("postgresql+psycopg://"):]
+    if url.startswith("postgresql://"):
+        return "postgresql+psycopg2://" + url[len("postgresql://"):]
+    return url
+
+
+database_url = _sync_url(os.environ.get("DATABASE_URL", settings.DATABASE_URL))
 
 config.set_main_option("sqlalchemy.url", database_url)
 

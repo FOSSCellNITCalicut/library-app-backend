@@ -34,7 +34,8 @@ class BookCopy(Base):
         String(100),
         nullable=False
     )
-        # aquisition date will be useful
+    
+    # aquisition date will be useful
     acquisition_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     callnumber: Mapped[str | None] = mapped_column(String(255))
