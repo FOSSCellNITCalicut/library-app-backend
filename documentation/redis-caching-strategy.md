@@ -2,627 +2,531 @@
 
 ## 1. Introduction
 
-The NITC Library Mobile Application will integrate Redis as an in-memory caching layer to improve response times, reduce load on the Koha backend, and provide a smoother user experience during peak usage periods.
+The NITC Library Mobile Application uses Redis as an in-memory cache to improve response times and reduce PostgreSQL load during peak usage. It follows a **cache-aside pattern**, where Redis is checked first and PostgreSQL is queried on cache miss. PostgreSQL serves as the system of record for the application layer, maintaining a continuously synchronized projection of Koha via background workers, while Koha remains the upstream source system accessed only through those workers.
 
-Redis will be used as a temporary storage layer and not as the primary source of truth. All authoritative data will remain in the Koha database. The application will follow a **Cache-Aside Pattern** where Redis is checked first, and the backend database is queried only when data is not present in cache.
+### Architecture Principles
+
+- **PostgreSQL** is the primary application data store. All request-time reads are served from PostgreSQL.
+- **Redis** is a performance cache over PostgreSQL. It is never used for correctness decisions or freshness evaluation. Cached data may be stale at any time.
+- **Koha** is not part of request-time flows. It is accessed only by background sync workers, with one exception: the user-initiated "Check Live Availability" action.
+- **TTL** is used only for cache eviction and fallback expiration.
 
 ---
 
-## 1.1 Current NITC Library Scale
+### 1.1 Current NITC Library Scale
 
 The Redis caching strategy is designed to support the scale of the NIT Calicut Central Library and its growing digital services.
 
-### Library Statistics
+#### Library Statistics
 
-| Metric           | Value   |
-| ---------------- | ------- |
-| Physical Books   | 135,069 |
-| e-Books          | 11,153  |
-| e-Journals       | 13,150  |
-| PhD Theses       | 1,317   |
-| Databases        | 6       |
-| Registered Users | 8,000+  |
-| Reading Capacity | 500+    |
+| Metric | Value |
+|---|---|
+| Physical Books | 135,069 |
+| e-Books | 11,153 |
+| e-Journals | 13,150 |
+| PhD Theses | 1,317 |
+| Databases | 6 |
+| Registered Users | 8,000+ |
+| Reading Capacity | 500+ |
 
-### Expected Mobile Application Usage
+#### Expected Mobile Application Usage
 
-| Metric                       | Estimated Value |
-| ---------------------------- | --------------- |
-| Active Users per Day         | 1,500–3,000     |
-| Peak Concurrent Users        | 200–500         |
-| Search Requests per Day      | 5,000–15,000    |
-| Book Detail Requests per Day | 3,000–10,000    |
-| Dashboard Requests per Day   | 2,000–5,000     |
+| Metric | Estimated Value |
+|---|---|
+| Active Users per Day | 1,500–3,000 |
+| Peak Concurrent Users | 200–500 |
+| Search Requests per Day | 5,000–15,000 |
+| Book Detail Requests per Day | 3,000–10,000 |
+| Dashboard Requests per Day | 2,000–5,000 |
 
-Given the large collection size and user base, repeated requests for popular books, search queries, and dashboard information can generate significant load on the Koha backend. Redis is introduced to reduce repeated database access, improve response times, and increase scalability during peak usage periods such as examinations and registration periods.
-
----
-
-# 2. Current Scope (Phase 1)
-
-## 2.1 Data to be Cached
-
-| Data                  | Purpose                              |
-| --------------------- | ------------------------------------ |
-| Search Results        | Reduce repeated search queries       |
-| Search Autocomplete   | Faster search suggestions            |
-| Book Metadata         | Reduce repeated book detail requests |
-| New Arrivals          | Faster homepage loading              |
-| User Borrowed Books   | Faster dashboard loading             |
-| User Fine Information | Quick access to fines                |
-| User Due Dates        | Quick access to due dates            |
-| User Sessions         | Fast authentication                  |
-| Search Counters       | Analytics and future recommendations |
-| Rate Limiting Data    | Prevent API abuse                    |
-
-> **Note:** Book metadata caching covers bibliographic information only (title, author, ISBN, publisher, subjects). Real-time availability and copy status are always fetched live from Koha and are never cached.
+Given the large collection size and user base, repeated requests for popular books, browse feeds, and dashboard information can generate significant load on PostgreSQL. Redis is introduced to reduce repeated database access, improve response times, and increase scalability during peak usage periods such as examinations and registration periods.
 
 ---
 
-## 2.2 Redis Key Structure
+## 2. Current Scope (Phase 1)
 
-### Search
+### 2.1 Data to be Cached
 
-```text
-search:results:{query}
-search:count:{query}
-search:autocomplete:{prefix}
+| Data | Purpose |
+|---|---|
+| Book Metadata | Reduce repeated book detail requests |
+| Book Availability | Fast availability lookups; PostgreSQL `last_availability_sync` is the freshness authority |
+| Browse Feed Pages | Faster paginated catalog loading |
+| User Events | Fast dashboard loading (borrowed, fines, dues) |
+| User Sessions | Fast authentication |
+| Search Counters | Short-term analytics aggregation before PostgreSQL flush |
+| Rate Limiting Data | Prevent API abuse |
+
+> **Note:** Book metadata and availability are stored in separate keys owned by separate sync workers. Metadata changes infrequently; availability changes on every borrow or return. Separating them prevents high-frequency availability updates from causing unnecessary metadata cache churn.
+
+> **Note:** Search is handled directly by PostgreSQL FTS using `tsvector` and `to_tsquery`. Search results are not cached in Redis due to high query cardinality, low reuse, and invalidation complexity. Autocomplete is also handled by PostgreSQL FTS natively.
+
+> **Note:** New arrivals are not cached separately. They are served through the paginated browse feed (`books:browse:page:{page}`), avoiding two overlapping cache layers.
+
+---
+
+### 2.2 Redis Key Structure
+
+#### Books
+
+```
+book:detail:{biblio_id}
+books:availability:{biblio_id}
+books:browse:page:{page}
 ```
 
-Examples:
-
-```text
-search:results:data_structures
-search:count:data_structures
-search:autocomplete:dat
+**Examples:**
 ```
-
-### Books
-
-```text
-book:detail:{biblionumber}
-```
-
-Example:
-
-```text
 book:detail:74489
+books:availability:74489
+books:browse:page:1
 ```
 
-### Homepage
+`book:detail:*` contains:
+- Title
+- Author
+- ISBN
+- Publisher
+- Subjects
+- Description
+- Cover URL
 
-```text
-new:arrivals:all
+`books:availability:*` contains:
+- Available copies
+- Total copies
+- Branch information
+
+#### User Data
+
+```
+user:{roll_no}:events
 ```
 
-### User Data
-
-```text
-user:{roll_no}:borrowed
-user:{roll_no}:fines
-user:{roll_no}:due_dates
+**Example:**
+```
+user:B210234CS:events
 ```
 
-Examples:
+`user:*:events` contains:
+- Borrowed books
+- Due dates
+- Fines
 
-```text
-user:B210234CS:borrowed
-user:B210234CS:fines
-user:B210234CS:due_dates
+#### Authentication
+
 ```
-
-### Authentication
-
-```text
 user:session:{token}
 ```
 
-### Rate Limiting
+#### Analytics
 
-```text
+```
+search:count:{query}
+```
+
+**Example:**
+```
+search:count:data_structures
+```
+
+`search:count:*` is a short-term aggregation counter only. Values are periodically flushed to PostgreSQL for long-term analytics, trend tracking, and hot/cold book detection. Redis counters do not survive restarts and should not be treated as the source of truth for analytics.
+
+#### Rate Limiting
+
+```
 rate:limit:{roll_no}:search
 ```
 
 ---
 
-## 2.3 TTL Strategy
+### 2.3 TTL Strategy
 
-| Key                   | TTL       |
-| --------------------- | --------- |
-| search:results:*      | 5 minutes |
-| search:count:*        | 7 days    |
-| search:autocomplete:* | 1 hour    |
-| book:detail:*         | 7 days    |
-| new:arrivals:all      | 24 hours  |
-| user:*:borrowed       | 2 minutes |
-| user:*:fines          | 5 minutes |
-| user:*:due_dates      | 5 minutes |
-| user:session:*        | 24 hours  |
-| rate:limit:*          | 1 minute  |
+| Key | TTL |
+|---|---|
+| `book:detail:*` | 7 days |
+| `books:availability:*` | 120 seconds |
+| `books:browse:page:*` | 5 minutes |
+| `user:*:events` | 30 minutes |
+| `user:session:*` | 24 hours |
+| `search:count:*` | 1 hour |
+| `rate:limit:*` | 1 minute |
 
-### TTL Design Principles
+#### TTL Design Principles
 
-* Frequently changing data uses short TTLs.
-* Rarely changing metadata uses long TTLs.
-* Authentication data remains cached for active sessions.
-* Search analytics require longer retention periods.
+- Primary freshness is maintained through **event-driven invalidation** by background sync workers. TTL is a safety net only, ensuring stale entries are eventually evicted if an invalidation event is missed.
+- `book:detail:*` uses a long TTL because metadata changes infrequently and the Metadata Sync Worker invalidates immediately on updates.
+- `books:availability:*` uses 120 seconds as a cache eviction safety net. Actual availability freshness is determined by `last_availability_sync` in PostgreSQL `books_copies`.
+- `books:browse:page:*` uses a short TTL because feed composition shifts as new books are added.
+- `user:*:events` uses 30 minutes because user data changes infrequently in normal usage; event-driven invalidation handles the cases when it does.
+- `search:count:*` uses 1 hour as a flush interval before being persisted to PostgreSQL.
 
 ---
 
-## 2.4 Cache Invalidation Strategy
+### 2.4 Cache Invalidation Strategy
 
-### Automatic Expiration
+#### Primary: Event-Driven Invalidation
 
-Most cached entries expire automatically using TTL.
+Invalidation is triggered immediately by background sync workers after every update. This is the primary freshness mechanism. Each worker only invalidates the data it owns.
 
-### Event-Based Invalidation
-
-#### Book Metadata Updated
-
-Delete:
-
-```text
-book:detail:{biblionumber}
+**Metadata Sync Worker Updates a Book** — Delete:
+```
+book:detail:{biblio_id}
 ```
 
-#### New Book Added
-
-Delete:
-
-```text
-new:arrivals:all
+**Availability Sync Worker Updates a Book** — Delete:
+```
+books:availability:{biblio_id}
 ```
 
-#### Student Borrows a Book
-
-Delete:
-
-```text
-user:{roll_no}:borrowed
-user:{roll_no}:due_dates
+**New Book Discovered by Availability Sync Worker** — Delete:
+```
+books:browse:page:1
 ```
 
-#### Student Returns a Book
+Only page 1 is invalidated since new books appear at the top of the feed. Remaining pages rely on the existing 5-minute TTL. Global invalidation of all browse pages is avoided to prevent unnecessary cache rebuilding.
 
-Delete:
-
-```text
-user:{roll_no}:borrowed
-user:{roll_no}:due_dates
+**User Event Written to PostgreSQL** — Delete:
+```
+user:{roll_no}:events
 ```
 
-#### Student Renews a Book
-
-Delete:
-
-```text
-user:{roll_no}:due_dates
+**User Logout** — Delete:
 ```
-
-#### Fine Payment
-
-Delete:
-
-```text
-user:{roll_no}:fines
-```
-
-#### User Logout
-
-Delete:
-
-```text
 user:session:{token}
 ```
 
+#### Secondary: Automatic TTL Expiration
+
+TTL serves as a fallback safety net in case an invalidation event is missed. It ensures no entry remains stale indefinitely.
+
+#### Freshness Ownership
+
+| Cache Key | Owner | Freshness Authority | TTL Role |
+|---|---|---|---|
+| `book:detail:*` | Metadata Sync Worker | Event-driven invalidation | 7-day safety net |
+| `books:availability:*` | Availability Sync Worker | PostgreSQL `last_availability_sync` | 120s safety net |
+| `books:browse:page:*` | Availability Sync Worker | Page 1 invalidation on new book | 5-min safety net |
+| `user:*:events` | User Event Writer | Event-driven invalidation | 30-min safety net |
+| `user:session:*` | Auth Service | Explicit deletion on logout | 24-hr safety net |
+
 ---
 
-## 2.5 Cache Hit / Miss Flow
+### 2.5 Cache Hit / Miss Flow
 
-### Search Request
+All cache misses fall through to PostgreSQL, never directly to Koha — except for the explicit "Check Live Availability" action.
 
-1. Student enters search query.
-2. Check Redis:
-
-```text
-search:results:{query}
-```
-
-3. If cache hit:
-
-   * Return cached results.
-4. If cache miss:
-
-   * Query Koha API.
-   * Store result in Redis.
-   * Return result.
-
-### Book Detail Request
+#### Book Detail Request
 
 1. Student opens a book page.
-2. Check Redis:
+2. Perform independent Redis lookups for metadata and availability:
+   - `book:detail:{biblio_id}`
+   - `books:availability:{biblio_id}`
+3. **If both cache hit:** Return combined metadata and availability.
+4. **If either cache miss:**
+   - Query PostgreSQL `books` table for metadata.
+   - Query PostgreSQL `books_copies` table for availability.
+   - Cache each result under its respective key.
+   - Return combined result.
 
-```text
-book:detail:{biblionumber}
-```
+#### Cache Stampede Protection
 
-3. If cache hit:
+Under peak load, a popular book page expiring can cause many concurrent requests to hit PostgreSQL simultaneously. To prevent this:
 
-   * Return cached book metadata.
-4. If cache miss:
+- Use a Redis lock (`SET NX` with short expiry) when a cache miss is detected.
+- Only one request acquires the lock and populates the cache.
+- Other concurrent requests wait briefly and then read from the newly populated cache.
 
-   * Query Koha API.
-   * Cache result for 7 days.
-   * Return result.
+This applies especially to hot keys: `book:detail:*` and `books:availability:*`. Stampede protection is applied only for high-frequency keys during TTL expiry events.
 
-### Dashboard Request
+#### Check Live Availability
 
-Check:
+If the user explicitly requests a live availability check:
 
-```text
-user:{roll_no}:borrowed
-user:{roll_no}:fines
-user:{roll_no}:due_dates
-```
+1. Query PostgreSQL `books_copies` for `last_availability_sync` timestamp.
+2. **If `last_availability_sync` is older than 120 seconds:**
+   - Query Koha API directly for current item status.
+   - Update PostgreSQL `books_copies` with fresh data and new `last_availability_sync` timestamp.
+   - Invalidate `books:availability:{biblio_id}` in Redis.
+   - Cache updated availability in Redis.
+   - Return fresh result.
+3. **If `last_availability_sync` is within 120 seconds:**
+   - Return current PostgreSQL availability as sufficiently fresh.
+   - Repopulate Redis cache if it was missing.
 
-* If cache hit:
+Freshness is determined by reading `last_availability_sync` from PostgreSQL, not from Redis TTL state. Redis is bypassed entirely for the freshness decision. This is the only request-time path that touches Koha, and it is user-initiated and explicit, not automatic.
 
-  * Return dashboard instantly.
-* If cache miss:
+#### Sync vs Live Check Distinction
 
-  * Query backend.
-  * Cache result.
-  * Return response.
+| Type | Mechanism | Freshness Level | Koha Access |
+|---|---|---|---|
+| Background Availability Sync | Rolling worker, continuous | Approximate (~30 min cycle) | Via sync worker only |
+| Check Live Availability | User-initiated, on demand | Exact (< 120 seconds) | Direct, at request time |
 
-### Authentication Request
+Background sync provides broad approximate freshness for general browsing. The live check provides exact freshness when a student needs to know right now whether a book is available.
 
-Check:
+#### Browse Feed Request
 
-```text
-user:session:{token}
-```
+1. Check Redis: `books:browse:page:{page}`
+2. **If cache hit:** Return cached page.
+3. **If cache miss:**
+   - Query PostgreSQL `books` table.
+   - Cache result for 5 minutes.
+   - Return result.
 
-* If cache hit:
+#### Search Request
 
-  * User is authenticated.
-* If cache miss:
+Search does not use Redis caching.
 
-  * Return 401 Unauthorized.
+1. Student enters search query.
+2. Normalize query (lowercase, trim whitespace).
+3. Query PostgreSQL FTS directly.
+4. Return results.
+
+Search queries have high cardinality and low reuse. PostgreSQL FTS with proper indexing is fast enough that a Redis caching layer adds complexity without meaningful gain.
+
+#### Dashboard Request
+
+1. Check Redis: `user:{roll_no}:events`
+2. **If cache hit:** Return dashboard instantly.
+3. **If cache miss:**
+   - Query PostgreSQL `events` table.
+   - Cache result for 30 minutes.
+   - Return response.
+
+#### Authentication Request
+
+1. Check Redis: `user:session:{token}`
+2. **If cache hit:** User is authenticated.
+3. **If cache miss:**
+   - Validate token with backend authentication service.
+   - If valid, recreate Redis session entry.
+   - Otherwise return `401 Unauthorized`.
 
 ---
 
-## 2.5.1 Fallback and Failure Handling Strategy
+### 2.5.1 Fallback and Failure Handling Strategy
 
-Redis is used only as a performance optimization layer and not as the primary source of truth.
-
-### Cache Miss Handling
+#### Cache Miss Handling
 
 When a requested key is not found in Redis:
-
-1. Query the Koha backend.
+1. Query PostgreSQL.
 2. Return the response to the client.
 3. Store the response in Redis using the configured TTL.
 
-### Redis Unavailability
+#### Redis Unavailability
 
 If Redis becomes temporarily unavailable:
-
 1. Skip cache lookup.
-2. Query the Koha backend directly.
+2. Query PostgreSQL directly.
 3. Return the response.
 4. Continue application operation without caching.
 
-### Session Validation Fallback
+#### Session Validation Fallback
 
 1. Check Redis session cache.
 2. If found, authenticate user.
-3. Otherwise validate token with backend.
+3. Otherwise validate token with backend authentication service.
 4. Recreate Redis session if valid.
-5. Return 401 if invalid.
+5. Return `401` if invalid.
 
-### Graceful Degradation
+#### Graceful Degradation
 
 If Redis is unavailable:
+- Search remains fully operational via PostgreSQL FTS.
+- Book metadata and availability retrieval remain operational.
+- Browse feed remains operational.
+- Dashboard remains operational.
+- Authentication remains operational through backend validation.
+- Only response times may increase until Redis recovers.
 
-* Search remains operational.
-* Book metadata retrieval remains operational.
-* Dashboard remains operational.
-* Authentication remains operational.
+#### Circuit Breaker Protection
 
-Only response times may increase.
-
-### Circuit Breaker Protection
-
-* Detect consecutive Redis failures.
-* Temporarily bypass Redis.
-* Retry after cooldown period.
-* Resume caching automatically after recovery.
-
----
-
-## 2.6 Performance Expectations
-
-| Operation          | Without Cache | With Cache |
-| ------------------ | ------------- | ---------- |
-| Search Results     | 200–500 ms    | 10–50 ms   |
-| Book Details       | 100–300 ms    | 5–30 ms    |
-| Dashboard Data     | 100–200 ms    | 10–50 ms   |
-| Autocomplete       | 50–150 ms     | <10 ms     |
-| Session Validation | 50–100 ms     | <10 ms     |
-
-### Expected Cache Hit Rates
-
-| Cache Type          | Expected Hit Rate |
-| ------------------- | ----------------- |
-| Search Results      | 70–80%            |
-| Book Metadata       | 85–90%            |
-| Autocomplete        | 95%+              |
-| User Dashboard Data | 60–70%            |
-| Session Tokens      | 99%               |
-| New Arrivals        | 95%+              |
-
-### Expected Impact
-
-* 70–90% reduction in backend read requests.
-* Faster dashboard loading.
-* Faster search experience.
-* Reduced load on Koha servers.
-* Better scalability during examination periods.
-* Near-instant responses for frequently accessed data.
+1. Detect consecutive Redis connection failures.
+2. Temporarily bypass Redis operations.
+3. Retry Redis connectivity after a cooldown period.
+4. Automatically resume caching once Redis becomes available.
 
 ---
 
-## 2.7 Redis Capacity Planning
+### 2.6 Performance Expectations
 
-### Estimated Memory Usage
+| Operation | Without Cache | With Cache |
+|---|---|---|
+| Book Details | 20–80 ms | 5–30 ms |
+| Availability | 20–50 ms | <10 ms |
+| Browse Feed | 50–100 ms | 10–30 ms |
+| Search | 50–150 ms | 50–150 ms |
+| Dashboard Data | 20–60 ms | 10–30 ms |
+| Session Validation | 50–100 ms | <10 ms |
 
-| Cache Type                | Estimated Entries | Average Size | Estimated Memory |
-| ------------------------- | ----------------- | ------------ | ---------------- |
-| Search Results            | 5,000             | 5 KB         | 25 MB            |
-| Book Metadata             | 20,000            | 2 KB         | 40 MB            |
-| Autocomplete Data         | 2,000             | 1 KB         | 2 MB             |
-| User Dashboard Data       | 3,000             | 2 KB         | 6 MB             |
-| User Sessions             | 5,000             | 500 B        | 2.5 MB           |
-| Analytics & Rate Limiting | 10,000            | 200 B        | 2 MB             |
+Search performance is unchanged since it bypasses Redis and hits PostgreSQL FTS directly.
 
-**Total Estimated Working Set:** ~80–150 MB
+#### Expected Cache Hit Rates
 
-A Redis instance with **512 MB RAM** is expected to be sufficient while leaving headroom for future features.
+| Cache Type | Expected Hit Rate |
+|---|---|
+| Book Metadata | 85–90% |
+| Book Availability | 80–85% |
+| Browse Feed | 90%+ |
+| User Events | 75–85% |
+| Session Tokens | 99% |
 
----
+#### Expected Impact
 
-## 2.8 Search Optimization Strategy
-
-### Query Normalization
-
-Examples:
-
-```text
-Data Structures
-data structures
-data  structures
-DATA STRUCTURES
-```
-
-Normalized to:
-
-```text
-data_structures
-```
-
-Benefits:
-
-* Higher cache hit rate
-* Reduced duplicate entries
-* Lower Redis memory usage
-* Consistent search behavior
-
-Example key:
-
-```text
-search:results:data_structures
-```
+- Significant reduction in PostgreSQL read load for book details, browse, and dashboard.
+- Near-instant responses for frequently accessed book pages and browse feeds.
+- Stable dashboard performance even during peak periods.
+- Koha completely isolated from request-time load except for explicit live availability checks.
 
 ---
 
-### Partial Query Caching
+### 2.7 Redis Capacity Planning
 
-Examples:
+#### Estimated Memory Usage
 
-```text
-d
-da
-dat
-data
-data st
-data stru
-```
+| Cache Type | Estimated Entries | Average Size | Estimated Memory |
+|---|---|---|---|
+| Book Metadata | 20,000 | 2 KB | 40 MB |
+| Book Availability | 20,000 | 200 B | 4 MB |
+| Browse Feed Pages | 50 | 10 KB | 0.5 MB |
+| User Events | 3,000 | 2 KB | 6 MB |
+| User Sessions | 5,000 | 500 B | 2.5 MB |
+| Search Counters | 5,000 | 200 B | 1 MB |
+| Rate Limiting | 5,000 | 200 B | 1 MB |
 
-Cache:
+**Total Estimated Working Set: ~55–100 MB**
 
-```text
-search:autocomplete:data
-search:autocomplete:data_stru
-```
-
-Benefits:
-
-* Faster autocomplete
-* Reduced backend traffic
-* Better user experience
+A Redis instance with 512 MB RAM is sufficient while leaving significant headroom for future features.
 
 ---
 
-### Cache Warming
+### 2.8 Cache Warming Strategy
+
+Cache warming focuses on browse feeds and popular book details since search no longer uses Redis.
 
 #### Process
 
-1. Retrieve top 100 search queries.
-2. Query Koha at startup.
-3. Store results in Redis.
-4. Serve future requests from cache.
-
-#### Example Popular Searches
-
-* Data Structures
-* Operating Systems
-* Database Management Systems
-* Computer Networks
-* Machine Learning
+1. On application startup, retrieve the top accessed `biblio_id`s and browse pages from PostgreSQL analytics.
+2. Query PostgreSQL for browse feed pages 1–5.
+3. Query PostgreSQL for top 500 most accessed book metadata and availability entries.
+4. Store results in Redis under their respective keys.
+5. Serve future requests from cache immediately.
 
 #### Benefits
 
-* Faster first-user experience
-* Reduced cold-start latency
-* Higher cache hit rates
+- Eliminates cold-start latency for the most accessed content.
+- Browse feed is immediately fast for the first users after deployment or restart.
+- Popular book pages are served from cache from startup.
 
-### Expected Search Impact
+#### Analytics Persistence
 
-* Increase search cache hit rate from **70–80%** to **85–95%**
-* Reduce duplicate cache entries
-* Improve autocomplete responsiveness
-* Lower Koha search traffic during peak periods
+`search:count:*` counters in Redis are flushed to PostgreSQL periodically (every hour or on shutdown). PostgreSQL is the source of truth for:
+- Long-term search trends
+- Hot/cold book classification
+- Popular book rankings
+- Recommendation engine inputs
+
+Redis counters are only used for short-term aggregation between flush intervals.
 
 ---
 
-# 3. Future Scope (Phase 2+)
+## 3. Future Scope (Phase 2+)
 
-## 3.1 Department-wise Popular Books
+### 3.1 Department-wise Popular Books
 
-```text
+```
 popular:books:dept:{dept}
 ```
 
-Examples:
-
-```text
+**Examples:**
+```
 popular:books:dept:cse
 popular:books:dept:ece
 ```
 
-TTL: **1 hour**
+**TTL:** 1 hour
 
-Use Cases:
+**Use Cases:** Personalized recommendations, department reading trends
 
-* Personalized recommendations
-* Department reading trends
+### 3.2 Global Popular Books
 
----
-
-## 3.2 Global Popular Books
-
-```text
+```
 popular:books:global
 ```
 
-TTL: **1 hour**
+**TTL:** 1 hour
 
-Use Cases:
+**Use Cases:** Homepage recommendations, trending books section
 
-* Homepage recommendations
-* Trending books section
+### 3.3 Semester-wise Recommended Books
 
----
-
-## 3.3 Semester-wise Recommended Books
-
-```text
+```
 sem:books:{dept}:{semester}
 ```
 
-Examples:
-
-```text
+**Examples:**
+```
 sem:books:cse:s5
 sem:books:ece:s3
 ```
 
-TTL: **30 days**
+**TTL:** 30 days
 
-Use Cases:
+**Use Cases:** Semester-specific recommendations, curriculum support
 
-* Semester-specific recommendations
-* Curriculum support
+### 3.4 Reading History
 
----
-
-## 3.4 Reading History
-
-```text
+```
 user:{roll_no}:history
 ```
 
-TTL: **30 days**
+**TTL:** 30 days
 
-Use Cases:
+**Use Cases:** Reading analytics, personalized recommendations, borrow history
 
-* Reading analytics
-* Personalized recommendations
-* Borrow history
+### 3.5 Reading List / Wishlist
 
----
-
-## 3.5 Reading List / Wishlist
-
-```text
+```
 user:{roll_no}:reading_list
 ```
 
-TTL: **7 days**
+**TTL:** 7 days
 
-Use Cases:
+**Use Cases:** Wishlist management, quick access to saved books
 
-* Wishlist management
-* Quick access to saved books
+### 3.6 Due-Date Reminder System
 
----
-
-## 3.6 Due-Date Reminder System
-
-```text
-notified:{roll_no}:{biblionumber}
+```
+notified:{roll_no}:{biblio_id}
 ```
 
-TTL: **24 hours**
+**TTL:** 24 hours
 
-Use Cases:
+**Use Cases:** Push notifications, email reminders, fine prevention alerts
 
-* Push notifications
-* Email reminders
-* Fine prevention alerts
+### 3.7 Recommendation Engine
 
----
+#### Potential Recommendation Models
 
-## 3.7 Recommendation Engine
+- **Department-Based Recommendations** — Popular among CSE students
+- **Semester-Based Recommendations** — Popular among Semester 5 students
+- **Frequently Borrowed Together** — Books commonly borrowed by the same students
+- **Faculty Recommended Books** — Books recommended by course instructors
+- **Syllabus-Based Recommendations** — Books linked directly to courses and semester curriculum
 
-### Potential Recommendation Models
-
-#### Department-Based Recommendations
-
-> Popular among CSE students
-
-#### Semester-Based Recommendations
-
-> Popular among Semester 5 students
-
-#### Frequently Borrowed Together
-
-Books commonly borrowed by the same students.
-
-#### Faculty Recommended Books
-
-Books recommended by course instructors.
-
-#### Syllabus-Based Recommendations
-
-Books linked directly to courses and semester curriculum.
+All recommendation inputs (borrow counts, trends, co-borrowing patterns) are persisted in PostgreSQL. Redis serves only as a read cache for pre-computed recommendation results.
 
 ---
 
-# 4. Conclusion
+## 4. Conclusion
 
-Redis will significantly improve application performance by caching frequently accessed data and reducing repeated requests to the Koha backend.
+Redis will significantly improve application performance by caching frequently accessed data and reducing repeated reads from PostgreSQL.
 
-The **Phase 1 implementation** focuses on performance optimization, scalability, and reduced backend load.
+The **Phase 1** implementation is intentionally lean:
+- Search bypasses Redis entirely, relying on PostgreSQL FTS.
+- Metadata and availability are stored in separate keys owned by separate sync workers, preventing unnecessary cache churn.
+- Event-driven invalidation by sync workers is the primary freshness mechanism. TTL is a safety net.
+- Cache stampede protection is applied to hot keys under peak load.
+- Analytics are aggregated temporarily in Redis and persisted to PostgreSQL.
 
-The **Phase 2 roadmap** leverages Redis data for personalized recommendations, reading analytics, academic assistance, trending content, and enhanced user engagement, providing a richer and more responsive digital library experience for NIT Calicut students and faculty.
+The **Phase 2** roadmap leverages cached data and PostgreSQL analytics for personalized recommendations, reading history, academic assistance, trending content, and enhanced user engagement, providing a richer and more responsive digital library experience for NIT Calicut students and faculty.
