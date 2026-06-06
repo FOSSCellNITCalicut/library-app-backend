@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 def run_migrations() -> None:
-    logger.info("Running alembic upgrade head")
+    logger.info("Running Alembic Upgrade Head")
     
     result = subprocess.run(
         ["alembic", "upgrade", "head"],

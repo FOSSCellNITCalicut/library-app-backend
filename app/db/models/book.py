@@ -79,12 +79,6 @@ class Book(Base):
         default=lambda: datetime.now(timezone.utc)
     )
 
-    updated_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc)
-    )
-
     # Relationship with BookCopy
     copies: Mapped[list["BookCopy"]] = relationship(
         back_populates="book",

@@ -5,7 +5,6 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import configure_logging
 from app.core.config import settings
 from app.db.database import AsyncSessionLocal
 from app.db.models import Book, MetadataQueue
@@ -13,7 +12,6 @@ from app.domains.sync.marc_parser import marc_parser
 from app.integrations.koha.client import KohaClient, koha_client
 
 
-configure_logging()
 logger = logging.getLogger(__name__)
 
 
@@ -63,6 +61,10 @@ class MetadataWorker:
             book.isbn = metadata["isbns"]
         if metadata.get("publisher"):
             book.publisher = metadata["publisher"]
+        if metadata.get("categories"):
+            book.categories = metadata["categories"]
+        if metadata.get("year"):
+            book.published_year = metadata["year"]
 
         book.metadata_synced_at = datetime.now(timezone.utc)
         return True

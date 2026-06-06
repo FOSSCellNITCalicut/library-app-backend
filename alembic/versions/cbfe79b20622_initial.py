@@ -39,7 +39,6 @@ def upgrade() -> None:
     sa.Column('metadata_synced_at', sa.DateTime(timezone=True), nullable=True),
     sa.Column('availability_synced_at', sa.DateTime(timezone=True), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), nullable=True),
-    sa.Column('updated_at', sa.DateTime(timezone=True), nullable=True),
     sa.PrimaryKeyConstraint('biblio_id')
     )
     op.create_index(op.f('ix_books_isbn'), 'books', ['isbn'], unique=False)

@@ -5,7 +5,6 @@ from datetime import date, datetime, timezone
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import configure_logging
 from app.core.config import settings
 from app.db.database import AsyncSessionLocal
 from app.db.models import Book, BookCopy, SyncState
@@ -13,7 +12,6 @@ from app.domains.sync.queue_service import enqueue_metadata_job
 from app.integrations.koha.client import KohaClient, KohaServerError, koha_client
 
 
-configure_logging()
 logger = logging.getLogger(__name__)
 
 NEW_DISCOVERY_PRIORITY = 10
