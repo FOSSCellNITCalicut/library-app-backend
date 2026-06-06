@@ -47,9 +47,7 @@ class KohaClient:
         
         except httpx.HTTPStatusError as e:
             if e.response.status_code >= 500:
-                raise KohaServerError(
-                    f"Koha /items returned {e.response.status_code} on page {page}"
-                ) from e
+                raise KohaServerError(f"Koha /items returned {e.response.status_code} on page {page}") from e
             
             raise
 

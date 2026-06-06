@@ -66,7 +66,7 @@ CREATE TABLE book_copies (
         ON DELETE CASCADE,
 
     branch TEXT NOT NULL,
-    acquisition_date TIMESTAMPZ,
+    acquisition_date DATE,
 
     -- Display Fields
     callnumber TEXT,

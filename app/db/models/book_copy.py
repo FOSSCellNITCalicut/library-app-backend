@@ -1,12 +1,13 @@
 from .book import Book
 from app.db.database import Base
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from sqlalchemy import (
     BigInteger,
     String,
     ForeignKey,
+    Date,
     DateTime
 )
 from sqlalchemy.orm import (
@@ -36,7 +37,7 @@ class BookCopy(Base):
     )
     
     # aquisition date will be useful
-    acquisition_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    acquisition_date: Mapped[date | None] = mapped_column(Date)
 
     callnumber: Mapped[str | None] = mapped_column(String(255))
 

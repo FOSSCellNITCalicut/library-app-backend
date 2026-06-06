@@ -27,27 +27,15 @@ class AvailabilitySchemaError(Exception):
     """Raised when the Koha /items response is missing expected fields."""
 
 
-def _parse_koha_datetime(value) -> datetime | None:
-    """
-    Koha returns timestamps as ISO-8601 strings. asyncpg refuses raw strings
-    for timestamptz columns, so normalise to a timezone-aware datetime here.
-    """
-    if value is None or isinstance(value, datetime):
-        return value
+def _parse_koha_date(value) -> date | None:
+    # If Koha ever returns acquisition_date in an unexpected format, we want to avoid crashing the whole worker.
     
-    if isinstance(value, date):
-        return datetime(value.year, value.month, value.day, tzinfo=timezone.utc)
-    
-    if isinstance(value, str) and value:
-        try:
-            parsed = datetime.fromisoformat(value)
-        except ValueError:
-            return None
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=timezone.utc)
-        return parsed
-    
-    return None
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        return None
 
 
 class AvailabilityWorker:
@@ -121,7 +109,7 @@ class AvailabilityWorker:
             biblio_id=biblio_id,
             branch=branch,
             callnumber=item.get("callnumber"),
-            acquisition_date=_parse_koha_datetime(item.get("acquisition_date")),
+            acquisition_date=_parse_koha_date(item.get("acquisition_date")),
             status=self.compute_availability(item),
             last_seen_at=now,
         )
