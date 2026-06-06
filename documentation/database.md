@@ -89,7 +89,7 @@ WHERE last_seen_at < NOW() - INTERVAL '30 days'
 
 **3. metadata_queue**
 
-DB-backed queue for the metadata worker. The availability worker enqueues rows here for every newly discovered biblio. The metadata worker claims them with `SELECT ... FOR UPDATE SKIP LOCKED`.
+DB-backed queue for the metadata worker. The availability worker enqueues rows here for every newly discovered biblio. The metadata worker claims the highest-priority eligible row, processes it, then either marks it `completed` or schedules a retry.
 
 ```sql
 CREATE TABLE metadata_queue (
@@ -98,7 +98,6 @@ CREATE TABLE metadata_queue (
     priority INT DEFAULT 0,
     retry_count INT DEFAULT 0,
     status TEXT DEFAULT 'pending',  -- 'pending' | 'completed' | 'failed'
-    last_error TEXT,
     available_at TIMESTAMPTZ DEFAULT NOW()
 );
 ```
@@ -108,22 +107,28 @@ CREATE TABLE metadata_queue (
 - `completed`: previously succeeded. Will be flipped back to `pending` if re-enqueued (stale-data re-fetch).
 - `failed`: dead-lettered after `MAX_METADATA_RETRIES` failures. Never resurrected.
 
+Failure details (the exception repr) are logged at `WARNING` (retry) or `ERROR` (dead-letter) but are **not persisted** on the row. Inspect the worker logs to see why a row was dead-lettered.
+
+The `enqueue_metadata_job` upsert enforces the no-resurrect contract via a `CASE` expression on conflict:
+- `completed → pending` (re-fetch stale data)
+- `pending → pending` (idempotent)
+- `failed → failed` (dead-lettered rows stay dead; `priority` is still bumped, harmlessly)
+
 ---
 
 **4. sync_state**
 
-Per-worker progress and heartbeat. There is one row per worker, keyed by `worker_name`.
+Singleton row holding the availability worker's page cursor and heartbeat. One row, ever, with `id = 1`.
 
 ```sql
 CREATE TABLE sync_state (
-    worker_name TEXT PRIMARY KEY,
+    id INT PRIMARY KEY DEFAULT 1,
     current_page INT NOT NULL DEFAULT 1,
-    last_completed_at TIMESTAMPTZ,  -- heartbeat; NULL until first successful page
-    updated_at TIMESTAMPTZ DEFAULT NOW()
+    last_completed_at TIMESTAMPTZ  -- heartbeat; NULL until first successful page
 );
 ```
 
-The availability worker writes `('availability', ...)`, the metadata worker is tracked with `('metadata', ...)` (page counter currently unused but reserved for a future rolling refresh loop).
+The metadata worker does not use this table — it gets its work from `metadata_queue`. The `last_completed_at` column is written by the availability worker at three sites (successful page, page wrap-around, post-backoff page advance) and **is the producer side of a heartbeat**. The consumer side is not implemented: nothing in the running app currently reads `last_completed_at` to detect a stuck worker, and `/health` does not check it. If the worker dies, the timestamp simply stops updating. Alerting is TODO — see `documentation/issues.md` ("Sync worker dies silently").
 
 ---
 

@@ -32,7 +32,7 @@ If the availability or metadata sync worker crashes, the DB goes stale with no v
 
 **Solution:** Each worker must write a heartbeat to sync_state after every page. A watchdog cron checks if last_completed_at is older than a threshold (10 mins for availability, 1 hour for metadata) and alerts via email or Telegram.
 
-> **Status:** `sync_state` now has a per-worker `last_completed_at` column, and the availability worker writes it after each successful page. The watchdog cron and alerting are still TODO.
+> **Status:** Only the **producer** side is implemented. `sync_state.last_completed_at` is written by the availability worker at three sites (`app/workers/availability_worker.py`: after a successful page, after a wrap-around reset, and after the post-backoff page advance). The **consumer** side is not: nothing in the running app reads `last_completed_at`, the `/health` endpoint ignores it, and there is no watchdog cron. The column is in place; a watcher that raises on `last_completed_at < NOW() - 10 minutes` and integrates with `/health` is the next step.
 
 ---
 
@@ -179,4 +179,4 @@ The live check hits Koha directly. If it starts timing out frequently, something
 - Index strategies for books and books_copies
 - Schema for events table
 
-> **Implemented:** Exponential backoff with dead-letter is in `MetadataWorker`. `metadata_queue` schema is documented in `documentation/database.md`.
+> **Implemented:** Exponential backoff with dead-letter is in `MetadataWorker`. `metadata_queue` schema is documented in `documentation/database.md`. Failure details are emitted in the worker logs at `WARNING` (retry) or `ERROR` (dead-letter) but are not persisted on the row.

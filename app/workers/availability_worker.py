@@ -9,7 +9,7 @@ from app.core.config import settings
 from app.db.database import AsyncSessionLocal
 from app.db.models import Book, BookCopy, SyncState
 from app.domains.sync.queue_service import enqueue_metadata_job
-from app.integrations.koha.client import KohaClient, KohaServerError, koha_client
+from app.integrations.koha.client import KohaClient, KohaServerError
 
 
 logger = logging.getLogger(__name__)
@@ -88,9 +88,7 @@ class AvailabilityWorker:
         sample = response[0]
         missing = EXPECTED_ITEM_KEYS - sample.keys()
         if missing:
-            raise AvailabilitySchemaError(
-                f"Koha /items response missing expected fields: {sorted(missing)}"
-            )
+            raise AvailabilitySchemaError(f"Koha /items response missing expected fields: {sorted(missing)}")
 
     async def process_item(self, *, session: AsyncSession, item: dict) -> bool:
         item_id = item.get("item_id")
@@ -160,7 +158,7 @@ class AvailabilityWorker:
                 response = await self.client.get_items(page=state.current_page)
             except KohaServerError as e:
                 logger.error("Koha 5xx on page %s: %s", state.current_page, e)
-                return
+                raise
 
             self.validate_page(response)
 
@@ -190,48 +188,70 @@ class AvailabilityWorker:
                 len(response),
             )
 
+    async def _skip_stuck_page(self) -> int:
+        """
+        Advance the cursor past the current page so the worker stops spinning
+        on a page that keeps failing.
+        
+        Returns the page number that was skipped (before the advance) so the caller can log it.
+        The caller is responsible for resetting any in-memory failure counters.
+        """
+        async with AsyncSessionLocal() as session:
+            state = await self.get_sync_state(session=session)
+            old_page = state.current_page
+            state.current_page += 1
+            state.last_completed_at = datetime.now(timezone.utc)
+            await session.commit()
+        
+        return old_page
+
     async def run(self) -> None:
         consecutive_500s = 0
-        
+
         while True:
             try:
                 await self.sync_next_page()
                 consecutive_500s = 0
-            
+
+            except KohaServerError as e:
+                logger.error("Koha 5xx in availability loop: %s", e)
+                consecutive_500s += 1
+
+                if consecutive_500s >= settings.MAX_AVAILABILITY_500_RETRIES:
+                    old_page = await self._skip_stuck_page()
+                    logger.error(
+                        "Koha returned %s consecutive errors on page %s, advancing to page %s",
+                        consecutive_500s, old_page, old_page + 1,
+                    )
+                    consecutive_500s = 0
+                else:
+                    await asyncio.sleep(settings.AVAILABILITY_SYNC_DELAY)
+
+                continue
+
             except AvailabilitySchemaError as e:
                 logger.error("Schema validation failed, halting sync: %s", e)
 
-                # If the schema is not what we expect, it could either be a transient issue or a long-term change. 
+                # If the schema is not what we expect, it could either be a transient issue or a long-term change.
                 # Back off for a while before retrying, but keep the worker alive to avoid losing the sync state.
                 # Sync state doesn't have retry counts or error tracking unlike metadata queue
                 await asyncio.sleep(settings.AVAILABILITY_SYNC_DELAY * 6)
                 continue
-            
+
             except Exception as e:
                 logger.exception("Unexpected error in availability loop: %s", e)
                 consecutive_500s += 1
-                
+
                 if consecutive_500s >= settings.MAX_AVAILABILITY_500_RETRIES:
+                    old_page = await self._skip_stuck_page()
                     logger.error(
-                        "Koha returned errors %s times in a row, backing off. Moving to next page %s",
-                        consecutive_500s,
-                        state.current_page + 1
+                        "Koha returned %s consecutive errors on page %s, advancing to page %s",
+                        consecutive_500s, old_page, old_page + 1,
                     )
-                    
-                    # At this point, move to the next page to avoid getting stuck
-                    async with AsyncSessionLocal() as session:
-                        state = await self.get_sync_state(session=session)
-                        state.current_page += 1
-                        state.last_completed_at = datetime.now(timezone.utc)
-                        await session.commit()
+                    consecutive_500s = 0
                 else:
                     await asyncio.sleep(settings.AVAILABILITY_SYNC_DELAY)
-                
+
                 continue
 
             await asyncio.sleep(settings.AVAILABILITY_SYNC_DELAY)
-
-
-if __name__ == "__main__":
-    worker = AvailabilityWorker()
-    asyncio.run(worker.run())

@@ -2,8 +2,6 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    DATABASE_URL: str
-
     KOHA_BASE_URL: str = "https://opac.nitc.ac.in/api/v1/public"
 
     KOHA_USERNAME: str | None = None
@@ -23,6 +21,9 @@ class Settings(BaseSettings):
     KOHA_AVAILABILITY_TIMEOUT_SECONDS: float = 3.0
 
     LOG_LEVEL: str = "INFO"
+
+    # DB
+    DATABASE_URL: str
 
     class Config:
         env_file = ".env"

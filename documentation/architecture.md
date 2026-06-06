@@ -222,13 +222,12 @@ while True:
 
 This facilitates easier retries, better Koha friendliness and also removes the need for gathering networking requests.
 
-This also requires the need for maintaining a separate `sync_state` table, in case of failures, system restarts, network error etc. There is one row per worker, keyed by `worker_name`:
+This also requires the need for maintaining a separate `sync_state` table, in case of failures, system restarts, network error etc. The table is a singleton - one row that holds the availability worker's page cursor and heartbeat:
 ```sql
 CREATE TABLE sync_state (
-    worker_name TEXT PRIMARY KEY,
+    id INT PRIMARY KEY DEFAULT 1,
     current_page INT NOT NULL DEFAULT 1,
-    last_completed_at TIMESTAMPTZ,
-    updated_at TIMESTAMPTZ DEFAULT NOW()
+    last_completed_at TIMESTAMPTZ
 );
 ```
 

@@ -5,16 +5,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models.metadata_queue import MetadataQueue
 
 
-async def enqueue_metadata_job(
-    *, session: AsyncSession, biblio_id: int, priority: int = 0
-) -> None:
+async def enqueue_metadata_job(*, session: AsyncSession, biblio_id: int, priority: int = 0) -> None:
     """
     Enqueue a metadata job for processing.
 
     Status rules on conflict (no-resurrect contract):
-      completed -> pending (data has gone stale, re-fetch)
-      pending -> pending (idempotent)
-      failed -> failed  (dead-lettered; do NOT resurrect)
+    - completed -> pending (data has gone stale, re-fetch)
+    - pending -> pending (idempotent)
+    - failed -> failed (dead-lettered; do NOT resurrect)
 
     Priority is still bumped for all rows on conflict (harmless for failed rows
     since they will never be claimed).

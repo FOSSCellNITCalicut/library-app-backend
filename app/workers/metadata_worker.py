@@ -157,8 +157,3 @@ class MetadataWorker:
                     logger.exception("Unexpected error in metadata loop: %s", e)
 
             await asyncio.sleep(settings.METADATA_WORKER_DELAY)
-
-
-if __name__ == "__main__":
-    worker = MetadataWorker()
-    asyncio.run(worker.run())
