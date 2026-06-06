@@ -1,13 +1,55 @@
 # Library App Backend
 
-FastAPI backend for a library management system. Pre-computes an efficient read model from Koha ILS via periodic sync, with PostgreSQL for storage and background workers for metadata/availability enrichment.
+FastAPI backend for a library management system. Pre-computes an efficient read model from Koha ILS via periodic sync, with PostgreSQL for storage and background workers for metadata/availability enrichment. The background workers run inside the FastAPI process as background asyncio tasks, started by the app's lifespan.
 
 ## Prerequisites
 
-- Python 3.13+
+- Python 3.10+ (Dockerfile uses `python:3.10-slim`)
 - PostgreSQL (running on `localhost:5432`)
 
-## Setup
+## Running with Docker Compose (recommended)
+
+```bash
+cp .env.example .env
+docker compose up --build
+```
+
+This starts:
+
+- `db` (Postgres 16) on `localhost:5432`
+- `api` on `localhost:8000`
+
+The `api` service bind-mounts the project source to `/app` and runs uvicorn with `--reload`, so code edits on the host are picked up by the worker loop and the HTTP server without rebuilding the image. 
+
+Anonymous volumes overlay `/app/app/__pycache__` and `/app/alembic/__pycache__` so the container's bytecode cache doesn't sync back into the host tree.
+
+On startup the `api` process:
+
+1. Runs `alembic upgrade head` (async engine, against the live DB).
+2. Starts the availability and metadata workers as background asyncio tasks.
+3. Exposes `GET /health`.
+
+Tail logs:
+
+```bash
+docker compose logs -f api
+```
+
+Stop everything (keep the data volume):
+
+```bash
+docker compose down
+```
+
+Reset the DB (drop the data volume too):
+
+```bash
+docker compose down -v
+```
+
+The compose stack uses the service name `db` as the database host inside `.env`.
+
+## Manual setup (host-based)
 
 ```bash
 # 1. Clone the repo
@@ -25,23 +67,13 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Edit `.env`:
-
-```
-DATABASE_URL=postgresql://postgres:nitc@localhost:5432/library_app
-```
-
-## Database Setup
+## Running the app
 
 ```bash
-# Create the database- library_app
-
-# Run migrations
 alembic upgrade head
-
-# (optional) Generate a new migration after model changes
-alembic revision --autogenerate -m "description"
+uvicorn app.main:app --reload
 ```
 
+The lifespan hook will start the workers as background tasks. The API serves on `http://localhost:8000` with `/health` available.
 
-See `documentation` folder for full info
+See `documentation` folder for full info.

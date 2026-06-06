@@ -1,7 +1,7 @@
 """add full text search
 
 Revision ID: 8cb19fefb0b7
-Revises: 44c271c1bb6d
+Revises: cbfe79b20622
 Create Date: 2026-06-05 08:42:57.138759
 
 """
@@ -13,7 +13,7 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision: str = '8cb19fefb0b7'
-down_revision: Union[str, Sequence[str], None] = '44c271c1bb6d'
+down_revision: Union[str, Sequence[str], None] = 'cbfe79b20622'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -30,7 +30,7 @@ def upgrade() -> None:
             to_tsvector(
                 'english',
                 coalesce(title,'') || ' ' ||
-                coalesce(array_to_string(author,' '),'') || ' ' ||
+                coalesce(array_to_string(authors,' '),'') || ' ' ||
                 coalesce(array_to_string(categories,' '),'') || ' ' ||
                 coalesce(description,'')
             );
@@ -44,7 +44,7 @@ def upgrade() -> None:
                 to_tsvector(
                 'english',
                 coalesce(NEW.title,'') || ' ' ||
-                coalesce(array_to_string(NEW.author,' '),'') || ' ' ||
+                coalesce(array_to_string(NEW.authors,' '),'') || ' ' ||
                 coalesce(array_to_string(NEW.categories,' '),'') || ' ' ||
                 coalesce(NEW.description,'')
             );
@@ -52,14 +52,15 @@ def upgrade() -> None:
         END
         $$ LANGUAGE plpgsql;
         """)
-    # trigger
+    
+    # Trigger
     op.execute("""
         CREATE TRIGGER books_search_vector_trigger
         BEFORE INSERT OR UPDATE
         ON books
         FOR EACH ROW
         EXECUTE FUNCTION books_search_vector_update();
-        """)
+    """)
 
     # ### end Alembic commands ###
 

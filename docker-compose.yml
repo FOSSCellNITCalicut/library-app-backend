@@ -1,0 +1,53 @@
+services:
+  db:
+    container_name: db
+    
+    image: postgres:16-alpine
+    
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=nitc
+      - POSTGRES_DB=library_app
+    
+    ports:
+      - "5432:5432"
+    
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d library_app"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    container_name: api
+    
+    build:
+      context: .
+      dockerfile: Dockerfile
+    
+    volumes:
+      - .:/app
+      - /app/app/__pycache__ # Ignore pycache directories
+      - /app/alembic/__pycache__ # Ignore alemibc/pycache directories
+    
+    env_file: .env
+
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:nitc@db:5432/library_app
+    
+    depends_on:
+      db:
+        condition: service_healthy
+    
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", '--reload']
+    
+    ports:
+      - "8000:8000"
+    
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
