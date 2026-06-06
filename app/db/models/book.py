@@ -1,5 +1,3 @@
-from app.db.database import Base
-
 from datetime import datetime, timezone
 
 from sqlalchemy.dialects.postgresql import ARRAY
@@ -8,7 +6,6 @@ from sqlalchemy import (
     String,
     Text,
     Integer,
-    ForeignKey,
     DateTime
 )
 from sqlalchemy.orm import (
@@ -16,6 +13,8 @@ from sqlalchemy.orm import (
     mapped_column,
     relationship
 )
+
+from app.db.database import Base
 
 class Book(Base):
     __tablename__ = "books"
@@ -33,7 +32,7 @@ class Book(Base):
     )
     
     # Multiple authors can exist for a book (co-authors, editors)
-    author: Mapped[list[str] | None] = mapped_column(
+    authors: Mapped[list[str] | None] = mapped_column(
         ARRAY(String),
         nullable=True
     )
@@ -55,7 +54,8 @@ class Book(Base):
     description: Mapped[str | None] = mapped_column(Text)
 
     cover_url: Mapped[str | None] = mapped_column(Text)
-        # categories can be multiple
+    
+    # Categories can be multiple
     categories: Mapped[list[str] | None] = mapped_column(ARRAY(String))
 
 

@@ -9,6 +9,7 @@ from app import configure_logging
 from app.core.config import settings
 from app.db.database import AsyncSessionLocal
 from app.db.models import Book, MetadataQueue
+from app.domains.sync.marc_parser import marc_parser
 from app.integrations.koha.client import KohaClient, koha_client
 
 
@@ -36,68 +37,11 @@ class MetadataWorker:
                 MetadataQueue.status == "pending",
                 MetadataQueue.available_at <= now,
             )
-            .order_by(MetadataQueue.priority.desc())
-            .with_for_update(skip_locked=True)
+            .order_by(MetadataQueue.priority.desc(), MetadataQueue.id.asc())
             .limit(1)
         )
         result = await session.execute(stmt)
         return result.scalar_one_or_none()
-
-    def _find_marc_field(self, fields: list, code: str) -> dict | None:
-        if not fields:
-            return None
-        for entry in fields:
-            if isinstance(entry, dict) and code in entry:
-                value = entry[code]
-                if isinstance(value, dict):
-                    return value
-        return None
-
-    def _marc_subfield(self, field_data: dict | None, code: str) -> str | None:
-        if not field_data:
-            return None
-        subfields = field_data.get("subfields") or []
-        for sub in subfields:
-            if not isinstance(sub, dict):
-                continue
-            if code in sub:
-                value = sub[code]
-                if value:
-                    return str(value).strip()
-            if sub.get("code") == code:
-                value = sub.get("value")
-                if value:
-                    return str(value).strip()
-        return None
-
-    def parse_marc_to_dict(self, marc_data) -> dict:
-        """
-        Extract a small subset of fields from MARC-in-JSON. Tolerates missing
-        fields by returning whatever we can find.
-        """
-        if not isinstance(marc_data, dict):
-            return {}
-
-        fields = marc_data.get("fields") or []
-
-        title = self._marc_subfield(self._find_marc_field(fields, "245"), "a")
-        author = (
-            self._marc_subfield(self._find_marc_field(fields, "100"), "a")
-            or self._marc_subfield(self._find_marc_field(fields, "110"), "a")
-            or self._marc_subfield(self._find_marc_field(fields, "111"), "a")
-        )
-        isbn = self._marc_subfield(self._find_marc_field(fields, "020"), "a")
-        publisher = (
-            self._marc_subfield(self._find_marc_field(fields, "264"), "b")
-            or self._marc_subfield(self._find_marc_field(fields, "260"), "b")
-        )
-
-        return {
-            "title": title,
-            "author": [author] if author else None,
-            "isbn": [isbn] if isbn else None,
-            "publisher": publisher,
-        }
 
     async def update_book_metadata(
         self,
@@ -106,17 +50,17 @@ class MetadataWorker:
         biblio_id: int,
         metadata: dict,
     ) -> bool:
-        book = await session.get(Book, biblio_id)
+        book: Book | None = await session.get(Book, biblio_id)
         if not book:
             logger.warning("Book biblio_id=%s not found, skipping", biblio_id)
             return False
 
         if metadata.get("title"):
             book.title = metadata["title"]
-        if metadata.get("author"):
-            book.author = metadata["author"]
-        if metadata.get("isbn"):
-            book.isbn = metadata["isbn"]
+        if metadata.get("authors"):
+            book.authors = metadata["authors"]
+        if metadata.get("isbns"):
+            book.isbn = metadata["isbns"]
         if metadata.get("publisher"):
             book.publisher = metadata["publisher"]
 
@@ -148,7 +92,6 @@ class MetadataWorker:
                 return
 
             job.retry_count = new_retry_count
-            job.last_error = truncated_error
             job.status = new_status
             job.available_at = datetime.now(timezone.utc) + timedelta(seconds=backoff_seconds)
             await session.commit()
@@ -173,69 +116,47 @@ class MetadataWorker:
     async def process_job(self, *, session: AsyncSession, job: MetadataQueue) -> None:
         response = await self.client.get_metadata(job.biblio_id)
         if response is None:
-            raise MetadataSchemaError(
-                f"Koha /biblios/{job.biblio_id} returned no usable response"
-            )
+            raise MetadataSchemaError(f"Koha /biblios/{job.biblio_id} returned no usable response")
 
-        metadata = self.parse_marc_to_dict(response)
+        metadata = marc_parser.parse_marc_to_dict(response)
+
         if not metadata.get("title"):
-            raise MetadataSchemaError(
-                f"MARC for biblio_id={job.biblio_id} had no 245$a (title)"
-            )
+            raise MetadataSchemaError(f"MARC for biblio_id={job.biblio_id} had no 245$a (title)")
 
-        await self.update_book_metadata(
-            session=session,
-            biblio_id=job.biblio_id,
-            metadata=metadata,
-        )
+        await self.update_book_metadata(session=session, biblio_id=job.biblio_id, metadata=metadata)
 
         job.status = "completed"
-        job.last_error = None
 
     async def run(self) -> None:
-        try:
-            while True:
-                async with AsyncSessionLocal() as session:
+        while True:
+            async with AsyncSessionLocal() as session:
+                try:
+                    job = await self.claim_job(session=session)
+                    if job is None:
+                        await asyncio.sleep(settings.METADATA_WORKER_DELAY)
+                        continue
+
                     try:
-                        job = await self.claim_job(session=session)
-                        if job is None:
-                            await session.rollback()
-                            await asyncio.sleep(settings.METADATA_WORKER_DELAY)
-                            continue
+                        await self.process_job(session=session, job=job)
+                        await session.commit()
+                        logger.info("Metadata job for biblio_id=%s completed", job.biblio_id)
 
-                        try:
-                            await self.process_job(session=session, job=job)
-                            await session.commit()
-                            logger.info(
-                                "Metadata job for biblio_id=%s completed",
-                                job.biblio_id,
-                            )
-                        except Exception as process_error:
-                            biblio_id = job.biblio_id
-                            previous_retry_count = job.retry_count
-                            error_message = repr(process_error)
-                            await session.rollback()
-                            
-                            await self._record_failure(
-                                biblio_id=biblio_id,
-                                previous_retry_count=previous_retry_count,
-                                error=error_message,
-                            )
-                    except Exception as e:
-                        logger.exception("Unexpected error in metadata loop: %s", e)
-                        await session.rollback()
+                    except Exception as process_error:
+                        biblio_id = job.biblio_id
+                        previous_retry_count = job.retry_count
+                        error_message = repr(process_error)
+                        
+                        await self._record_failure(
+                            biblio_id=biblio_id,
+                            previous_retry_count=previous_retry_count,
+                            error=error_message,
+                        )
+                except Exception as e:
+                    logger.exception("Unexpected error in metadata loop: %s", e)
 
-                await asyncio.sleep(settings.METADATA_WORKER_DELAY)
-        except (KeyboardInterrupt, SystemExit):
-            logger.info("MetadataWorker shutting down")
-        finally:
-            await self.client.aclose()
-
-
-async def _main() -> None:
-    worker = MetadataWorker()
-    await worker.run()
+            await asyncio.sleep(settings.METADATA_WORKER_DELAY)
 
 
 if __name__ == "__main__":
-    asyncio.run(_main())
+    worker = MetadataWorker()
+    asyncio.run(worker.run())

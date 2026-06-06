@@ -42,6 +42,7 @@ async def lifespan(app: FastAPI):
     availability_worker = AvailabilityWorker(client=availability_client)
     metadata_worker = MetadataWorker(client=metadata_client)
 
+    # Start both workers tasks concurrently. They will run until the application is shutting down.
     availability_task = asyncio.create_task(
         availability_worker.run(), name="availability-worker"
     )
@@ -58,8 +59,10 @@ async def lifespan(app: FastAPI):
         for task in (availability_task, metadata_task):
             task.cancel()
 
+        # Wait for both tasks to finish, ignoring any exceptions raised due to cancellation
         await asyncio.gather(availability_task, metadata_task, return_exceptions=True)
 
+        # Close the Koha clients, ignoring any exceptions that occur during closing
         for client in (availability_client, metadata_client):
             try:
                 await client.aclose()

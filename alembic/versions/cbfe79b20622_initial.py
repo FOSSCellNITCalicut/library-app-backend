@@ -24,7 +24,7 @@ def upgrade() -> None:
     op.create_table('books',
     sa.Column('biblio_id', sa.BigInteger(), nullable=False),
     sa.Column('title', sa.Text(), nullable=False),
-    sa.Column('author', postgresql.ARRAY(sa.String()), nullable=True),
+    sa.Column('authors', postgresql.ARRAY(sa.String()), nullable=True),
     sa.Column('isbn', postgresql.ARRAY(sa.String()), nullable=True),
     sa.Column('publisher', sa.String(length=255), nullable=True),
     sa.Column('published_year', sa.Integer(), nullable=True),

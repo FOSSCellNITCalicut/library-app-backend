@@ -39,11 +39,6 @@ class MetadataQueue(Base):
         default="pending"
     )
 
-    last_error: Mapped[str | None] = mapped_column(
-        Text,
-        nullable=True
-    )
-
     available_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=func.now(),

@@ -1,4 +1,4 @@
-"""sync_state per-worker schema
+"""sync_state singleton
 
 Revision ID: a1b2c3d4e5f6
 Revises: 44c271c1bb6d
@@ -22,7 +22,12 @@ def upgrade() -> None:
 
     op.create_table(
         "sync_state",
-        sa.Column("worker_name", sa.Text(), nullable=False),
+        sa.Column(
+            "id",
+            sa.Integer(),
+            primary_key=True,
+            server_default="1",
+        ),
         sa.Column(
             "current_page",
             sa.Integer(),
@@ -30,14 +35,10 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.Column("last_completed_at", sa.DateTime(timezone=True), nullable=True),
-        sa.PrimaryKeyConstraint("worker_name"),
     )
 
     op.execute(
-        "INSERT INTO sync_state (worker_name, current_page) VALUES ('availability', 1)"
-    )
-    op.execute(
-        "INSERT INTO sync_state (worker_name, current_page) VALUES ('metadata', 1)"
+        "INSERT INTO sync_state (id, current_page) VALUES (1, 1)"
     )
 
 

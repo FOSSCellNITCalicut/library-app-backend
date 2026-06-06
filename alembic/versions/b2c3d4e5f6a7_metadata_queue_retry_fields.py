@@ -32,7 +32,6 @@ def upgrade() -> None:
             nullable=False,
             server_default="pending",
         ),
-        sa.Column("last_error", sa.Text(), nullable=True),
         sa.Column(
             "available_at",
             sa.TIMESTAMP(timezone=True),

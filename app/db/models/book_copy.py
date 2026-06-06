@@ -1,4 +1,4 @@
-from app.db.models.book import Book
+from .book import Book
 from app.db.database import Base
 
 from datetime import datetime, timezone
