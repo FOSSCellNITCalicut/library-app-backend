@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.db.database import AsyncSessionLocal
 from app.db.models import Book, BookCopy, SyncState
-from app.domains.sync.queue_service import enqueue_metadata_job
+from app.domains.books.queue_service import enqueue_metadata_job
 from app.integrations.koha.client import KohaClient, KohaServerError
 
 

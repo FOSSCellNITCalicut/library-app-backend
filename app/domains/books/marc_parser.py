@@ -12,12 +12,12 @@ class MarcParser:
             if not isinstance(field, dict):
                 continue
             value = field.get(tag)
-            
+
             if value:
                 matches.append(value)
-        
+
         return matches
-    
+
     def _marc_subfields(self, field_data: dict | None, code: str) -> list[str]:
         if not field_data:
             return []
@@ -29,23 +29,23 @@ class MarcParser:
         for sub in subfields:
             if not isinstance(sub, dict):
                 continue
-            
+
             value = sub.get(code)
             if value:
                 cleaned = str(value).strip()
                 if cleaned:
                     results.append(cleaned)
-        
+
         return results
-    
+
     def _dedupe(self, values: list[str]) -> list[str]:
         """Remove duplicates while preserving order"""
         return list(dict.fromkeys(values))
-    
+
     def _first_subfield(self, field: dict | None, code: str) -> str | None:
         subfields = self._marc_subfields(field, code)
         return subfields[0] if subfields else None
-    
+
     def _parse_year(self, text: str | None) -> int | None:
         if not text:
             return None
@@ -56,7 +56,7 @@ class MarcParser:
             return int(match.group())
 
         return None
-    
+
     def _extract_year(self, fields: list) -> int | None:
         """
         Prefer:
@@ -93,15 +93,15 @@ class MarcParser:
                     return int(year_str)
 
         return None
-    
+
     def _clean_title(self, title: str | None) -> str | None:
         if not title:
             return None
-        
+
         # Remove trailing slash + trailing punctuation
         title = re.sub(r"\s*/\s*$", "", title)
         return title.strip(" /:;,")
-    
+
     def _clean_isbn(self, isbn: str | None) -> str | None:
         if not isbn:
             return None
@@ -114,7 +114,7 @@ class MarcParser:
         isbn = re.sub(r"[^0-9Xx]", "", isbn)
 
         return isbn or None
-    
+
     def _clean_text(self, text: str | None) -> str | None:
         if not text:
             return None
@@ -124,14 +124,14 @@ class MarcParser:
     def parse_marc_to_dict(self, marc_data: dict) -> dict:
         if not isinstance(marc_data, dict):
             return {}
-        
+
         fields = marc_data.get("fields") or []
 
         # Title
         title_field = self._find_marc_fields(fields, "245")
         title = self._first_subfield(title_field[0], 'a') if title_field else None
         cleaned_title = self._clean_title(title)
-        
+
         # Author
         authors = []
 
@@ -189,33 +189,5 @@ class MarcParser:
             "categories": categories or None,
             "year": published_year,
         }
-    
+
 marc_parser = MarcParser()
-
-if __name__ == "__main__":
-    parser = MarcParser()
-    result = parser.parse_marc_to_dict(
-        {
-            "fields": [
-            { "008": "160708s1960    xxu           000 0 eng d" },
-            { "082": { "ind1": " ", "ind2": " ", "subfields": [ { "a": "510:620" } ] } },
-            { "100": { "ind1": " ", "ind2": " ", "subfields": [ { "a": "Natarajan, S." } ] } },
-            { "245": { "ind1": " ", "ind2": " ", "subfields": [
-                { "a": "Mathematics for the engineering course /" },
-                { "c": " by S. Natarajan" }
-            ]}},
-            { "260": { "ind1": " ", "ind2": " ", "subfields": [
-                { "a": "Madras :" },
-                { "b": "S.Viswanathan, " },
-                { "c": "1960." }
-            ]}},
-            { "300": { "ind1": " ", "ind2": " ", "subfields": [ { "a": "4,582p" } ] } },
-            { "365": { "ind1": " ", "ind2": " ", "subfields": [ { "b": "Rs.8" } ] } },
-            { "653": { "ind1": " ", "ind2": " ", "subfields": [ { "a": "Engineering" } ] } },
-            { "653": { "ind1": " ", "ind2": " ", "subfields": [ { "a": "Mathematics" } ] } },
-            { "999": { "ind1": " ", "ind2": " ", "subfields": [ { "c": "897" }, { "d": "897" } ] } }
-            ]
-        }
-    )
-
-    print(result)

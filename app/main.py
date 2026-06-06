@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from app import __version__, configure_logging
 from app.integrations.koha.client import KohaClient
 from app.workers.availability_worker import AvailabilityWorker
-from app.workers.metadata_worker import MetadataWorker
+from app.domains.books.worker import MetadataWorker
 
 
 configure_logging()

@@ -7,8 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.db.database import AsyncSessionLocal
-from app.db.models import Book, MetadataQueue
-from app.domains.sync.marc_parser import marc_parser
+from app.domains.books.models import Book, MetadataQueue
+from app.domains.books.marc_parser import marc_parser
 from app.integrations.koha.client import KohaClient, koha_client
 
 
@@ -147,7 +147,7 @@ class MetadataWorker:
                         biblio_id = job.biblio_id
                         previous_retry_count = job.retry_count
                         error_message = repr(process_error)
-                        
+
                         await self._record_failure(
                             biblio_id=biblio_id,
                             previous_retry_count=previous_retry_count,
