@@ -1,8 +1,9 @@
 from datetime import datetime, timezone
 
-from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy.dialects.postgresql import ARRAY, TSVECTOR
 from sqlalchemy import (
     BigInteger,
+    Index,
     String,
     Text,
     Integer,
@@ -30,6 +31,8 @@ class Book(Base):
         Text,
         nullable=False
     )
+
+    search_vector: Mapped[str | None] = mapped_column(TSVECTOR)
     
     # Multiple authors can exist for a book (co-authors, editors)
     authors: Mapped[list[str] | None] = mapped_column(
@@ -83,4 +86,13 @@ class Book(Base):
     copies: Mapped[list["BookCopy"]] = relationship(
         back_populates="book",
         cascade="all, delete-orphan"  
+    )
+
+    # GIN index
+    __table_args__ = (
+        Index(
+            "ix_books_search_vector",
+            "search_vector",
+            postgresql_using="gin"
+        ),
     )

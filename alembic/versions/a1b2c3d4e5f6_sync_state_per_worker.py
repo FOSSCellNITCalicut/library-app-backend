@@ -1,7 +1,7 @@
 """sync_state singleton
 
 Revision ID: a1b2c3d4e5f6
-Revises: 44c271c1bb6d
+Revises: cbfe79b20622
 Create Date: 2026-06-05 21:30:00.000000
 
 """
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 
 revision: str = "a1b2c3d4e5f6"
-down_revision: Union[str, Sequence[str], None] = "44c271c1bb6d"
+down_revision: Union[str, Sequence[str], None] = "cbfe79b20622"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
