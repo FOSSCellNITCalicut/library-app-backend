@@ -27,31 +27,39 @@ After the sync worker updates a book's metadata or availability in Postgres, the
 
 ## Failure Scenarios
 
-### Sync worker dies silently - Critical
+### Sync worker dies silently - Critical (partial)
 If the availability or metadata sync worker crashes, the DB goes stale with no visible error. Users see outdated data and nobody knows.
 
 **Solution:** Each worker must write a heartbeat to sync_state after every page. A watchdog cron checks if last_completed_at is older than a threshold (10 mins for availability, 1 hour for metadata) and alerts via email or Telegram.
 
+> **Status:** `sync_state` now has a per-worker `last_completed_at` column, and the availability worker writes it after each successful page. The watchdog cron and alerting are still TODO.
+
 ---
 
-### /items endpoint schema changes - Critical
+### /items endpoint schema changes - Critical (partial)
 If Koha updates and renames or removes fields in the /items response (e.g. checked_out_date, not_for_loan_status), the availability sync worker silently miscomputes availability for every book. No errors thrown, just wrong data.
 
 **Solution:** Validate the first page of /items response fields before each sync run. Assert expected fields exist. Alert and halt sync if validation fails rather than writing corrupt data to the DB.
 
+> **Status:** `AvailabilityWorker.validate_page` aborts the current page and backs off if expected fields are missing. Items within a page that are missing required fields are skipped and logged. Alerting on schema drift is still TODO.
+
 ---
 
-### DB trigger fails silently - Critical
+### DB trigger fails silently - Critical (partial)
 The architecture relies on DB-level triggers to keep total_copies and available_copies on the books table consistent with books_copies. If the trigger breaks or is accidentally dropped, aggregates go out of sync with no obvious symptom.
 
 **Solution:** Add a periodic consistency check - compare SUM of books_copies per biblio_id against books.total_copies and books.available_copies. Alert on any mismatch. Run this check after every deployment.
 
+> **Status:** The `book_copies_aggregates` trigger is in place and recomputes `total_copies`, `available_copies`, `lib_copies`, `mat_copies`, and `availability_synced_at` for the affected `biblio_id`. The consistency check cron is still TODO.
+
 ---
 
-### Bootstrap interrupted midway - Medium
+### Bootstrap interrupted midway - Medium (partial)
 The initial sync pages through all /items and enqueues metadata for every discovered biblio. If the process is interrupted (crash, network failure, restart), partial data is served - some books exist with no metadata, others are missing entirely.
 
 **Solution:** sync_state table handles resumability - worker picks up from current_page on restart. Placeholder books rows inserted during discovery must be clearly marked (e.g. metadata_synced_at IS NULL) so the API never returns them to the frontend until metadata is populated.
+
+> **Status:** `sync_state` is now per-worker and the availability worker resumes from `current_page` on restart. Placeholder books still have `title='Unknown Title'` until metadata arrives; an explicit `metadata_synced_at IS NULL` filter on the read side is still TODO.
 
 ---
 
@@ -168,6 +176,7 @@ The live check hits Koha directly. If it starts timing out frequently, something
 
 ## Not Yet Documented (acknowledged in architecture doc)
 
-- Explicit sync failure policy and retry behaviour (exponential backoff mentioned but not detailed)
 - Index strategies for books and books_copies
-- Schema for events table and metadata_queue table
+- Schema for events table
+
+> **Implemented:** Exponential backoff with dead-letter is in `MetadataWorker`. `metadata_queue` schema is documented in `documentation/database.md`.
