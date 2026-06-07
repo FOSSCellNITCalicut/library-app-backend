@@ -6,11 +6,13 @@ from contextlib import asynccontextmanager
 import httpx
 from fastapi import FastAPI
 
-from app import __version__, configure_logging
+from app.core.logging import configure_logging 
+from app.core.config import settings
 from app.integrations.koha.client import KohaClient
 from app.workers.availability_worker import AvailabilityWorker
 from app.workers.metadata_worker import MetadataWorker
 
+__version__ = "0.1.0"
 
 configure_logging()
 logger = logging.getLogger(__name__)
@@ -36,40 +38,46 @@ def run_migrations() -> None:
 async def lifespan(app: FastAPI):
     run_migrations()
 
-    availability_client = KohaClient()
-    metadata_client = KohaClient()
+    if settings.SEED_DATA:
+        availability_client = KohaClient()
+        metadata_client = KohaClient()
 
-    availability_worker = AvailabilityWorker(client=availability_client)
-    metadata_worker = MetadataWorker(client=metadata_client)
+        availability_worker = AvailabilityWorker(client=availability_client)
+        metadata_worker = MetadataWorker(client=metadata_client)
 
-    # Start both workers tasks concurrently. They will run until the application is shutting down.
-    availability_task = asyncio.create_task(
-        availability_worker.run(), name="availability-worker"
-    )
-    metadata_task = asyncio.create_task(
-        metadata_worker.run(), name="metadata-worker"
-    )
+        # Start both workers tasks concurrently. They will run until the application is shutting down.
+        availability_task = asyncio.create_task(
+            availability_worker.run(), name="availability-worker"
+        )
+        metadata_task = asyncio.create_task(
+            metadata_worker.run(), name="metadata-worker"
+        )
 
-    logger.info("Workers started")
+        logger.info("Workers Started")
+    else:
+        logger.info("SEED_DATA is False, skipping worker startup")
 
     try:
         yield
     finally:
-        logger.info("Stopping workers")
-        for task in (availability_task, metadata_task):
-            task.cancel()
+        if settings.SEED_DATA:
+            logger.info("Stopping Workers...")
+            for task in (availability_task, metadata_task):
+                task.cancel()
 
-        # Wait for both tasks to finish, ignoring any exceptions raised due to cancellation
-        await asyncio.gather(availability_task, metadata_task, return_exceptions=True)
+            # Wait for both tasks to finish, ignoring any exceptions raised due to cancellation
+            await asyncio.gather(availability_task, metadata_task, return_exceptions=True)
 
-        # Close the Koha clients, ignoring any exceptions that occur during closing
-        for client in (availability_client, metadata_client):
-            try:
-                await client.aclose()
-            except (RuntimeError, httpx.HTTPError) as e:
-                logger.warning("Error closing Koha client: %s", e)
+            # Close the Koha clients, ignoring any exceptions that occur during closing
+            for client in (availability_client, metadata_client):
+                try:
+                    await client.aclose()
+                except (RuntimeError, httpx.HTTPError) as e:
+                    logger.warning("Error closing Koha client: %s", e)
 
-        logger.info("Workers stopped")
+            logger.info("Workers Stopped")
+        else:
+            logger.info("SEED_DATA is False, no workers to stop")
 
 
 app = FastAPI(

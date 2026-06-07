@@ -194,6 +194,9 @@ class AvailabilityWorker:
         return old_page
 
     async def run(self) -> None:
+        # For any exception, wait twice the normal delay before retrying up to 5 times before skipping the page
+        # We want to be resilient to transient issues with the Koha server, but if there is a persistent problem with a 
+        # specific page, we shall skip it to avoid blocking the entire sync process
         consecutive_500s = 0
 
         while True:
@@ -213,7 +216,7 @@ class AvailabilityWorker:
                     )
                     consecutive_500s = 0
                 else:
-                    await asyncio.sleep(settings.AVAILABILITY_SYNC_DELAY)
+                    await asyncio.sleep(settings.AVAILABILITY_WORKER_DELAY * 2)
 
                 continue
 
@@ -223,7 +226,7 @@ class AvailabilityWorker:
                 # If the schema is not what we expect, it could either be a transient issue or a long-term change.
                 # Back off for a while before retrying, but keep the worker alive to avoid losing the sync state.
                 # Sync state doesn't have retry counts or error tracking unlike metadata queue
-                await asyncio.sleep(settings.AVAILABILITY_SYNC_DELAY * 6)
+                await asyncio.sleep(settings.AVAILABILITY_WORKER_DELAY * 2)
                 continue
 
             except Exception as e:
@@ -238,8 +241,9 @@ class AvailabilityWorker:
                     )
                     consecutive_500s = 0
                 else:
-                    await asyncio.sleep(settings.AVAILABILITY_SYNC_DELAY)
+                    await asyncio.sleep(settings.AVAILABILITY_WORKER_DELAY * 2)
 
                 continue
 
-            await asyncio.sleep(settings.AVAILABILITY_SYNC_DELAY)
+            # If syncing was successful, wait before the next page to avoid hammering the Koha server
+            await asyncio.sleep(settings.AVAILABILITY_WORKER_DELAY)
