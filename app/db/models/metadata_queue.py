@@ -5,6 +5,7 @@ from sqlalchemy import (
     BigInteger,
     Integer,
     Enum,
+    Index,
     TIMESTAMP,
     func,
 )
@@ -22,9 +23,7 @@ class JobStatus(str, enum.Enum):
 class MetadataQueue(Base):
     __tablename__ = "metadata_queue"
 
-    id: Mapped[int] = mapped_column(
-        primary_key=True
-    )
+    id: Mapped[int] = mapped_column(primary_key=True)
 
     biblio_id: Mapped[int] = mapped_column(
         BigInteger,
@@ -55,4 +54,8 @@ class MetadataQueue(Base):
     finished_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         nullable=True
+    )
+
+    __table_args__ = (
+        Index("ix_metadata_queue_status_finished_at", "status", "finished_at"),
     )

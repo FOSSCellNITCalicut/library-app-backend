@@ -93,13 +93,6 @@ With 30 min rolling sync, a book shown as available could have been borrowed rec
 
 ## Scalability Concerns
 
-### OPAC rate limiting during initial sync - Medium
-During bootstrap, the backend pages through all /items and fetches MARC for every new biblio_id. Without throttling this could get the server IP blocked by NITC.
-
-**Solution:** Rolling sync with sleep(10) between pages. For MARC fetches, 100-200ms delay between requests. Bootstrap must run over hours, not minutes. Never parallelise Koha requests.
-
----
-
 ### Hot/cold book sync inefficiency - Low (for now)
 Rolling sync treats all books equally. A book last borrowed in 2009 gets the same availability sync frequency as one borrowed yesterday.
 
