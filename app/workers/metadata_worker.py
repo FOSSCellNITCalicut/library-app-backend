@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.db.database import AsyncSessionLocal
 from app.db.models import Book, MetadataQueue
+from app.db.models.metadata_queue import JobStatus
 from app.domains.sync.marc_parser import marc_parser
 from app.integrations.koha.client import KohaClient, koha_client
 
@@ -32,14 +33,21 @@ class MetadataWorker:
         stmt = (
             select(MetadataQueue)
             .where(
-                MetadataQueue.status == "pending",
+                MetadataQueue.status == JobStatus.PENDING,
                 MetadataQueue.available_at <= now,
             )
             .order_by(MetadataQueue.priority.desc(), MetadataQueue.id.asc())
             .limit(1)
+            .with_for_update(skip_locked=True) # Lock the selected row to prevent other workers from claiming it simultaneously (not useful now)
         )
         result = await session.execute(stmt)
-        return result.scalar_one_or_none()
+        job = result.scalar_one_or_none()
+
+        if job:
+            job.status = JobStatus.IN_PROGRESS
+            await session.flush() # Save it immediately to lock the row for other workers (not useful now)
+
+        return job
 
     async def update_book_metadata(
         self,
@@ -79,7 +87,8 @@ class MetadataWorker:
         new_retry_count = previous_retry_count + 1
         give_up = new_retry_count >= settings.MAX_METADATA_RETRIES
         backoff_seconds = min(2 ** new_retry_count, MAX_BACKOFF_SECONDS)
-        new_status = "failed" if give_up else "pending"
+        
+        new_status = JobStatus.FAILED if give_up else JobStatus.PENDING
         truncated_error = (error or "")[:ERROR_TRUNCATE_LENGTH]
 
         async with AsyncSessionLocal() as session:
@@ -96,6 +105,9 @@ class MetadataWorker:
             job.retry_count = new_retry_count
             job.status = new_status
             job.available_at = datetime.now(timezone.utc) + timedelta(seconds=backoff_seconds)
+            if give_up:
+                job.finished_at = datetime.now(timezone.utc)
+            
             await session.commit()
 
         if give_up:
@@ -127,7 +139,8 @@ class MetadataWorker:
 
         await self.update_book_metadata(session=session, biblio_id=job.biblio_id, metadata=metadata)
 
-        job.status = "completed"
+        job.status = JobStatus.COMPLETED
+        job.finished_at = datetime.now(timezone.utc)
 
     async def run(self) -> None:
         while True:

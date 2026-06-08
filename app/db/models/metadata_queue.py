@@ -1,15 +1,22 @@
-from app.db.database import Base
-
 from datetime import datetime
+import enum
 
 from sqlalchemy import (
     BigInteger,
     Integer,
-    Text,
+    Enum,
     TIMESTAMP,
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column
+
+from app.db.database import Base
+
+class JobStatus(str, enum.Enum):
+    PENDING = "pending"
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+    FAILED = "failed"
 
 
 class MetadataQueue(Base):
@@ -34,13 +41,18 @@ class MetadataQueue(Base):
         default=0
     )
 
-    status: Mapped[str] = mapped_column(
-        Text,
-        default="pending"
+    status: Mapped[JobStatus] = mapped_column(
+        Enum(JobStatus, values_callable=lambda obj: [e.value for e in obj]),
+        default=JobStatus.PENDING
     )
 
     available_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=func.now(),
         nullable=False
+    )
+
+    finished_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        nullable=True
     )

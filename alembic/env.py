@@ -11,6 +11,8 @@ from alembic import context
 from app.core.config import settings
 from app.db.models import Base
 
+import alembic_postgresql_enum # Import the package to ensure it registers the event listeners for handling Enum types
+
 
 config = context.config
 
