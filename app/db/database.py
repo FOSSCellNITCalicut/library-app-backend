@@ -1,4 +1,10 @@
+import logging
+
 from app.core.config import settings
+
+
+logger = logging.getLogger(__name__)
+logger.info("FINAL DATABASE URL = %s", settings.DATABASE_URL)
 
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
@@ -7,9 +13,9 @@ from sqlalchemy.orm import DeclarativeBase
 DATABASE_URL = settings.DATABASE_URL
 
 engine = create_async_engine(
-    DATABASE_URL, 
+    DATABASE_URL,
     pool_size=20,
-    max_overflow=10,
+    max_overflow=5,
     echo=False
 )
 
@@ -23,6 +29,6 @@ AsyncSessionLocal = async_sessionmaker(
 class Base(DeclarativeBase):
     pass
 
-def get_db():
-    with AsyncSessionLocal() as db:
+async def get_db():
+    async with AsyncSessionLocal() as db:
         yield db

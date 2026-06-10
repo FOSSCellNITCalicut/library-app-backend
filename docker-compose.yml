@@ -30,8 +30,6 @@ services:
     
     volumes:
       - .:/app
-      - /app/app/__pycache__ # Ignore pycache directories
-      - /app/alembic/__pycache__ # Ignore alemibc/pycache directories
     
     env_file: .env
 

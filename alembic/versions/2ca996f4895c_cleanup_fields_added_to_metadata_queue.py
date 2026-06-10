@@ -31,12 +31,16 @@ def upgrade() -> None:
         existing_nullable=False,
         autoincrement=True)
     
+    op.execute("ALTER TABLE metadata_queue ALTER COLUMN status DROP DEFAULT")
+
     op.alter_column('metadata_queue', 'status',
         existing_type=sa.TEXT(),
         type_=sa.Enum('pending', 'in_progress', 'completed', 'failed', name='jobstatus'),
         existing_nullable=False,
         postgresql_using='status::jobstatus'
     )
+
+    op.execute("ALTER TABLE metadata_queue ALTER COLUMN status SET DEFAULT 'pending'::jobstatus")
     # ### end Alembic commands ###
 
 
