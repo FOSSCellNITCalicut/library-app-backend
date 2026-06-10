@@ -1,38 +1,74 @@
-from fastapi import APIRouter, Query,Path, Depends,HTTPException , status
+from fastapi import APIRouter, Query ,Path, Depends, HTTPException , status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.database import get_db
-from app.domains.books import service as service
-from app.domains.books.schemas import BookListResponse, BookDetailSchema
+from app.domains.books.service import (
+    BookService,                 
+    BookNotFoundError,           
+    ServiceValidationError,   
+)
+#need repository file done to create service
+from app.domains.books.repository import BookRepository
+from app.domains.books.schemas import (
+    BookListResponse,
+    BookDetailSchema,
+)
+
+router = APIRouter(
+    prefix="/books",
+    tags=["books"]
+)
 
 
+# Dependency to create service
+def get_book_service(
+    db: AsyncSession = Depends(get_db),
+) -> BookService:
+    
+    repository = BookRepository(db)
+    return BookService(repository)
 
-router = APIRouter(prefix="/books", tags=["books"])
 
 @router.get(
-        "/browse", 
-        response_model=BookListResponse,
-        status_code=status.HTTP_200_OK,
-        responses={
-            200: {"description": "List of books retrieved successfully"},
-            400: {"description": "Invalid query parameters"},
-            500: {"description": "Internal server error"}
-        }
+    "/browse",
+    response_model=BookListResponse,
+    status_code=status.HTTP_200_OK,
+    responses={
+        200: {"description": "List of books retrieved successfully"},
+        400: {"description": "Invalid query parameters"},
+        500: {"description": "Internal server error"},
+    },
 )
 async def browse_books(
-    page: int = Query(default=1, ge=1, description="Page number for pagination"),
-    per_page: int = Query(default=20, ge=1, le=100, description="Number of books per page"),
-    home_library_id: str | None = Query(None),
-    db: AsyncSession = Depends(get_db),
+    service: BookService = Depends(get_book_service),
+    page: int = Query(
+        default=1,
+        ge=1,
+        description="Page number for pagination",
+    ),
+    per_page: int = Query(
+        default=20,
+        ge=1,
+        le=100,
+        description="Number of books per page",
+    ),
+
+    # REMOVED: home_library_id ,Service layer doesn't support this parameter.
 
 ):
-    return await service.get_browse_books(
-        db, 
-        page=page,
-        per_page=per_page,
-        home_library_id=home_library_id
-    )
-     # return await service.get_browse_books(db, page=page)
+    try:
+        return await service.browse_books(            
+            page=page,
+            per_page=per_page,
+        )
+
+    except ServiceValidationError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+
+
 @router.get(
     "/search",
     response_model=BookListResponse,
@@ -44,18 +80,39 @@ async def browse_books(
     },
 )
 async def search_books(
-    q: str = Query(..., min_length=1, max_length=100, description="Search query for books"),
-    page: int = Query(default=1, ge=1, description="Page number for pagination"),
-    per_page: int = Query(default=20, ge=1, le=100, description="Number of books per page"),
-    db: AsyncSession = Depends(get_db),
+    service: BookService = Depends(get_book_service), 
+    q: str = Query(
+        ...,
+        min_length=1,
+        max_length=100,
+        description="Search query for books",
+    ),
+    page: int = Query(
+        default=1,
+        ge=1,
+        description="Page number for pagination",
+    ),
+    per_page: int = Query(
+        default=20,
+        ge=1,
+        le=100,
+        description="Number of books per page",
+    ),
+    
 ):
-    q = q.strip()
-    if not q:
+    try:
+        return await service.search_books(
+            query=q,                                  
+            # service expects query not q
+            page=page,
+            per_page=per_page,
+        )
+
+    except ServiceValidationError as e:              
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Search query cannot be empty"
+            detail=str(e),
         )
-    return await service.search_books(db, q=q, page=page, per_page=per_page)
 
 
 @router.get(
@@ -69,16 +126,25 @@ async def search_books(
     },
 )
 async def get_book(
-    biblio_id: int = Path(..., description="ID of the book to retrieve"),
-    db: AsyncSession = Depends(get_db),
+    service: BookService = Depends(get_book_service),
+    biblio_id: int = Path(
+        ...,
+        description="ID of the book to retrieve",
+    ),
 ):
-    book =  await service.get_book(db, biblio_id=biblio_id)
+    try:
+        return await service.get_book_details(         
+            biblio_id=biblio_id
+        )
 
-    if book is None:
+    except BookNotFoundError as e:                   
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Book with ID {biblio_id} not found"
+            detail=str(e),
         )
-    return book
 
-
+    except ServiceValidationError as e:              
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
