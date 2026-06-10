@@ -13,7 +13,7 @@ from app.domains.books.schemas import (
 )
 
 
-class ValidationError(Exception):
+class ServiceValidationError(Exception):
     pass
 
 
@@ -24,7 +24,7 @@ class BookNotFoundError(Exception):
 
 
 MAX_PER_PAGE = 100
-ALLOWED_SORT_FIELDS = {"title", "author", "published_year", "publisher"}
+ALLOWED_SORT_FIELDS = {"title", "authors", "published_year", "publisher"}
 
 
 class BookService:
@@ -34,7 +34,7 @@ class BookService:
 
     async def search_by_isbn(self, isbn) -> BookListResponse:
         if not isbn or not isbn.strip():
-            raise ValidationError("ISBN must not be empty")
+            raise ServiceValidationError("ISBN must not be empty")
 
         results = await self._repository.search_by_isbn(isbn.strip())
         items = self._to_summary(results)
@@ -43,13 +43,13 @@ class BookService:
 
     async def search_books(self, query, page=1, per_page=20) -> BookListResponse:
         if not query or not query.strip():
-            raise ValidationError("Search query must not be empty")
+            raise ServiceValidationError("Search query must not be empty")
 
         if page < 1:
-            raise ValidationError("Page must be >= 1")
+            raise ServiceValidationError("Page must be >= 1")
 
         if per_page < 1:
-            raise ValidationError("per_page must be >= 1")
+            raise ServiceValidationError("per_page must be >= 1")
         per_page = min(per_page, MAX_PER_PAGE)
 
         offset = (page - 1) * per_page
@@ -63,10 +63,10 @@ class BookService:
 
     async def browse_books(self, page=1, per_page=20, sort_by="title", sort_order="asc") -> BookListResponse:
         if page < 1:
-            raise ValidationError("Page must be >= 1")
+            raise ServiceValidationError("Page must be >= 1")
 
         if per_page < 1:
-            raise ValidationError("per_page must be >= 1")
+            raise ServiceValidationError("per_page must be >= 1")
         per_page = min(per_page, MAX_PER_PAGE)
 
         self._validate_sort_params(sort_by, sort_order)
@@ -93,8 +93,8 @@ class BookService:
 
     def _validate_sort_params(self, sort_by, sort_order):
         if sort_by not in ALLOWED_SORT_FIELDS:
-            raise ValidationError(
+            raise ServiceValidationError(
                 f"sort_by must be one of: {', '.join(sorted(ALLOWED_SORT_FIELDS))}"
             )
         if sort_order not in {"asc", "desc"}:
-            raise ValidationError("sort_order must be 'asc' or 'desc'")
+            raise ServiceValidationError("sort_order must be 'asc' or 'desc'")
