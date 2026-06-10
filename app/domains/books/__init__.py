@@ -1,2 +1,3 @@
-from app.db.models.book import Book
-from app.db.models.book_copy import BookCopy
+from app.domains.books.service import BookService
+
+__all__ = ["BookService"]
