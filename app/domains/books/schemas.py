@@ -90,3 +90,8 @@ class BookListResponse(BaseModel):
     page: int = Field(ge=1)
     per_page: int = Field(ge=1)
     total: int = Field(ge=0, description="Total number of matching books")
+
+    @computed_field
+    @property
+    def has_more(self) -> bool:
+        return self.page * self.per_page < self.total

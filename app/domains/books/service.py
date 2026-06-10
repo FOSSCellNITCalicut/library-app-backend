@@ -3,7 +3,7 @@
 Called by:  router.py
 Calls:      repository.py
 
-Returns clean dict data validated against Pydantic schemas.
+Returns validated Pydantic schema objects.
 """
 
 from app.domains.books.schemas import (
@@ -30,20 +30,18 @@ ALLOWED_SORT_FIELDS = {"title", "author", "published_year", "publisher"}
 class BookService:
     def __init__(self, repository):
         self._repository = repository
-        self._cache = None
+        self._cache = None # TODO: Implement caching layer for book details
 
-    async def search_by_isbn(self, isbn):
+    async def search_by_isbn(self, isbn) -> BookListResponse:
         if not isbn or not isbn.strip():
             raise ValidationError("ISBN must not be empty")
 
         results = await self._repository.search_by_isbn(isbn.strip())
-        items = [self._to_summary(r) for r in results]
+        items = self._to_summary(results)
 
-        return BookListResponse(
-            items=items, page=1, per_page=len(items) or 1, total=len(items),
-        ).model_dump()
+        return BookListResponse(items=items, page=1, per_page=len(items) or 1, total=len(items))
 
-    async def search_books(self, query, page=1, per_page=20):
+    async def search_books(self, query, page=1, per_page=20) -> BookListResponse:
         if not query or not query.strip():
             raise ValidationError("Search query must not be empty")
 
@@ -59,13 +57,11 @@ class BookService:
             query=query, offset=offset, limit=per_page,
         )
 
-        items = [self._to_summary(r) for r in results]
+        items = self._to_summary(results)
 
-        return BookListResponse(
-            items=items, page=page, per_page=per_page, total=total_count,
-        ).model_dump()
+        return BookListResponse(items=items, page=page, per_page=per_page, total=total_count)
 
-    async def browse_books(self, page=1, per_page=20, sort_by="title", sort_order="asc"):
+    async def browse_books(self, page=1, per_page=20, sort_by="title", sort_order="asc") -> BookListResponse:
         if page < 1:
             raise ValidationError("Page must be >= 1")
 
@@ -81,24 +77,19 @@ class BookService:
             sort_by=sort_by, sort_order=sort_order,
         )
 
-        items = [self._to_summary(r) for r in results]
-        base = BookListResponse(
-            items=items, page=page, per_page=per_page, total=total_count,
-        ).model_dump()
+        items = self._to_summary(results)
 
-        base["sort_by"] = sort_by
-        base["sort_order"] = sort_order
-        return base
+        return BookListResponse(items=items, page=page, per_page=per_page, total=total_count)
 
-    async def get_book_details(self, biblio_id):
+    async def get_book_details(self, biblio_id) -> BookDetailSchema:
         book = await self._repository.get_book_by_id(biblio_id)
         if book is None:
             raise BookNotFoundError(biblio_id)
 
-        return BookDetailSchema.model_validate(book).model_dump()
+        return BookDetailSchema.model_validate(book)
 
-    def _to_summary(self, book):
-        return BookSummarySchema.model_validate(book)
+    def _to_summary(self, result):
+        return [BookSummarySchema.model_validate(r) for r in result]
 
     def _validate_sort_params(self, sort_by, sort_order):
         if sort_by not in ALLOWED_SORT_FIELDS:
