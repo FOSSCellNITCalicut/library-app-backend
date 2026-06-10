@@ -1,6 +1,10 @@
 from datetime import date, datetime
+from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, computed_field
+
+# Coerces NULL from the DB into an empty list so the frontend never gets null.
+StringList = Annotated[list[str], BeforeValidator(lambda v: v if v is not None else [])]
 
 
 class BookCopySchema(BaseModel):
@@ -24,7 +28,7 @@ class BookSummarySchema(BaseModel):
 
     biblio_id: int = Field(description="Koha bibliographic record ID")
     title: str
-    authors: list[str] | None = None
+    authors: StringList = Field(default_factory=list)
     edition: str | None = None
     cover_url: str | None = None
     available_copies: int = Field(
@@ -54,16 +58,14 @@ class BookDetailSchema(BaseModel):
 
     biblio_id: int = Field(description="Koha bibliographic record ID")
     title: str
-    authors: list[str] | None = None
-    isbn: list[str] | None = Field(
-        default=None, description="One or more ISBNs (older books may have none)"
-    )
+    authors: StringList = Field(default_factory=list)
+    isbn: StringList = Field(default_factory=list, description="One or more ISBNs (older books may have none)")
     publisher: str | None = None
     published_year: int | None = None
     edition: str | None = None
     description: str | None = None
     cover_url: str | None = None
-    categories: list[str] | None = None
+    categories: StringList = Field(default_factory=list)
 
     # Availability aggregates kept at the book level by DB triggers
     total_copies: int
