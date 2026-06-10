@@ -1,95 +1,71 @@
 # AI-generated test cases — verify behaviour, not implementation details.
 
+from datetime import datetime, timezone
+
 import pytest
 
+from app.domains.books.models import Book, BookCopy
 from app.domains.books.service import BookNotFoundError, BookService, ValidationError
+
+
+def _make_book(data):
+    biblio_id = data["biblio_id"]
+    return Book(
+        biblio_id=biblio_id,
+        title=data["title"],
+        authors=data.get("authors"),
+        publisher=data.get("publisher"),
+        published_year=data.get("published_year"),
+        isbn=[data["isbn"]] if isinstance(data.get("isbn"), str) else data.get("isbn"),
+        categories=data.get("categories"),
+        description=data.get("description"),
+        edition=data.get("edition"),
+        cover_url=data.get("cover_url"),
+        total_copies=data.get("total_copies", 0),
+        available_copies=data.get("available_copies", 0),
+        lib_copies=data.get("lib_copies", 0),
+        mat_copies=data.get("mat_copies", 0),
+        availability_synced_at=data.get("availability_synced_at"),
+    )
 
 
 class FakeRepository:
     def __init__(self):
-        self.books = [
-            {
-                "biblio_id": 1,
-                "title": "The Great Gatsby",
-                "authors": ["F. Scott Fitzgerald"],
-                "publisher": "Scribner",
-                "published_year": 1925,
-                "isbn": "9780743273565",
-                "categories": ["Fiction", "Classic"],
-                "description": "A story of the mysteriously wealthy Jay Gatsby.",
-                "score": 9.0,
-            },
-            {
-                "biblio_id": 2,
-                "title": "To Kill a Mockingbird",
-                "authors": ["Harper Lee"],
-                "publisher": "J.B. Lippincott & Co.",
-                "published_year": 1960,
-                "isbn": "9780061120084",
-                "categories": ["Fiction", "Drama"],
-                "description": "A novel about racial injustice.",
-                "score": 8.5,
-            },
-            {
-                "biblio_id": 3,
-                "title": "1984",
-                "authors": ["George Orwell"],
-                "publisher": "Secker & Warburg",
-                "published_year": 1949,
-                "isbn": "9780451524935",
-                "categories": ["Dystopian", "Science Fiction"],
-                "description": "A dystopian social science fiction novel.",
-                "score": 7.0,
-            },
-            {
-                "biblio_id": 4,
-                "title": "Pride and Prejudice",
-                "authors": ["Jane Austen"],
-                "publisher": "T. Egerton",
-                "published_year": 1813,
-                "isbn": "9780141439518",
-                "categories": ["Romance", "Classic"],
-                "description": "A romantic novel of manners.",
-                "score": None,
-            },
-            {
-                "biblio_id": 5,
-                "title": "The Catcher in the Rye",
-                "authors": ["J.D. Salinger"],
-                "publisher": "Little, Brown and Company",
-                "published_year": 1951,
-                "isbn": "9780316769488",
-                "categories": ["Fiction", "Coming-of-age"],
-                "description": "A story about teenage angst.",
-                "score": None,
-            },
+        self._books = [
+            _make_book(b) for b in BOOK_DATA
         ]
-        self.copies = {
-            1: [
-                {"branch": "Main Library", "status": "available", "call_number": "813.52 FIT"},
-                {"branch": "Science Branch", "status": "checked_out", "call_number": "813.52 FIT"},
-            ],
-            2: [
-                {"branch": "Main Library", "status": "available", "call_number": "813.54 LEE"},
-            ],
+        self._copies = {
+            biblio_id: [
+                BookCopy(
+                    item_id=c["item_id"],
+                    biblio_id=biblio_id,
+                    branch=c["branch"],
+                    status=c["status"],
+                    callnumber=c["callnumber"],
+                    acquisition_date=c.get("acquisition_date"),
+                )
+                for c in copies
+            ]
+            for biblio_id, copies in COPY_DATA.items()
         }
+        for book in self._books:
+            book.copies = self._copies.get(book.biblio_id, [])
         self._call_count = 0
 
     async def search_by_isbn(self, isbn):
-        results = [
-            dict(b) for b in self.books
-            if b["isbn"] == isbn
+        return [
+            b for b in self._books
+            if b.isbn and isbn in b.isbn
         ]
-        return results
 
     async def search_books(self, query, offset=None, limit=None):
         self._call_count += 1
         q = query.lower()
         results = [
-            b for b in self.books
-            if q in b["title"].lower()
-            or any(q in a.lower() for a in b.get("authors", []))
-            or any(q in c.lower() for c in b["categories"])
+            b for b in self._books
+            if q in b.title.lower()
+            or any(q in a.lower() for a in b.authors or [])
+            or any(q in c.lower() for c in b.categories or [])
         ]
         total = len(results)
         if offset is not None and limit is not None:
@@ -98,12 +74,12 @@ class FakeRepository:
 
     async def browse_books(self, offset=0, limit=20, sort_by="title", sort_order="asc"):
         self._call_count += 1
-        results = list(self.books)
+        results = list(self._books)
         sort_key = {"title": "title", "published_year": "published_year", "author": "authors", "publisher": "publisher"}.get(sort_by, "title")
         reverse = sort_order == "desc"
 
         def sort_val(book):
-            val = book.get(sort_key)
+            val = getattr(book, sort_key)
             if val is None:
                 return (1, "") if sort_order == "asc" else (0, "")
             if isinstance(val, list):
@@ -117,13 +93,87 @@ class FakeRepository:
 
     async def get_book_by_id(self, biblio_id):
         self._call_count += 1
-        for b in self.books:
-            if b["biblio_id"] == biblio_id:
-                return dict(b)
+        for b in self._books:
+            if b.biblio_id == biblio_id:
+                return b
         return None
 
     async def get_book_copies(self, biblio_id):
-        return self.copies.get(biblio_id, [])
+        return self._copies.get(biblio_id, [])
+
+
+BOOK_DATA = [
+    {
+        "biblio_id": 1,
+        "title": "The Great Gatsby",
+        "authors": ["F. Scott Fitzgerald"],
+        "publisher": "Scribner",
+        "published_year": 1925,
+        "isbn": "9780743273565",
+        "categories": ["Fiction", "Classic"],
+        "description": "A story of the mysteriously wealthy Jay Gatsby.",
+        "total_copies": 2,
+        "available_copies": 1,
+        "lib_copies": 1,
+        "mat_copies": 0,
+        "availability_synced_at": datetime(2025, 1, 1, tzinfo=timezone.utc),
+    },
+    {
+        "biblio_id": 2,
+        "title": "To Kill a Mockingbird",
+        "authors": ["Harper Lee"],
+        "publisher": "J.B. Lippincott & Co.",
+        "published_year": 1960,
+        "isbn": "9780061120084",
+        "categories": ["Fiction", "Drama"],
+        "description": "A novel about racial injustice.",
+        "total_copies": 1,
+        "available_copies": 1,
+        "lib_copies": 1,
+        "mat_copies": 0,
+        "availability_synced_at": datetime(2025, 1, 1, tzinfo=timezone.utc),
+    },
+    {
+        "biblio_id": 3,
+        "title": "1984",
+        "authors": ["George Orwell"],
+        "publisher": "Secker & Warburg",
+        "published_year": 1949,
+        "isbn": "9780451524935",
+        "categories": ["Dystopian", "Science Fiction"],
+        "description": "A dystopian social science fiction novel.",
+    },
+    {
+        "biblio_id": 4,
+        "title": "Pride and Prejudice",
+        "authors": ["Jane Austen"],
+        "publisher": "T. Egerton",
+        "published_year": 1813,
+        "isbn": "9780141439518",
+        "categories": ["Romance", "Classic"],
+        "description": "A romantic novel of manners.",
+    },
+    {
+        "biblio_id": 5,
+        "title": "The Catcher in the Rye",
+        "authors": ["J.D. Salinger"],
+        "publisher": "Little, Brown and Company",
+        "published_year": 1951,
+        "isbn": "9780316769488",
+        "categories": ["Fiction", "Coming-of-age"],
+        "description": "A story about teenage angst.",
+    },
+]
+
+COPY_DATA = {
+    1: [
+        {"item_id": 1, "branch": "Main Library", "status": "available", "callnumber": "813.52 FIT"},
+        {"item_id": 2, "branch": "Science Branch", "status": "checked_out", "callnumber": "813.52 FIT"},
+    ],
+    2: [
+        {"item_id": 3, "branch": "Main Library", "status": "available", "callnumber": "813.54 LEE"},
+    ],
+}
 
 
 @pytest.fixture

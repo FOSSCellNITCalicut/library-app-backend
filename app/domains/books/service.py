@@ -7,7 +7,6 @@ Returns clean dict data validated against Pydantic schemas.
 """
 
 from app.domains.books.schemas import (
-    BookCopySchema,
     BookDetailSchema,
     BookListResponse,
     BookSummarySchema,
@@ -96,51 +95,10 @@ class BookService:
         if book is None:
             raise BookNotFoundError(biblio_id)
 
-        copies = await self._repository.get_book_copies(biblio_id)
-        isbn_val = book.get("isbn")
-        if isinstance(isbn_val, str):
-            isbn_val = [isbn_val]
+        return BookDetailSchema.model_validate(book).model_dump()
 
-        return BookDetailSchema(
-            biblio_id=book["biblio_id"],
-            title=book["title"],
-            authors=book.get("authors"),
-            isbn=isbn_val,
-            publisher=book.get("publisher"),
-            published_year=book.get("published_year"),
-            edition=None,
-            description=book.get("description"),
-            cover_url=None,
-            categories=book.get("categories"),
-            total_copies=len(copies),
-            available_copies=sum(1 for c in copies if c.get("status") == "available"),
-            lib_copies=0,
-            mat_copies=0,
-            availability_synced_at=None,
-            copies=[
-                BookCopySchema(
-                    item_id=0,
-                    branch=c["branch"],
-                    callnumber=c.get("call_number"),
-                    status=c["status"],
-                    acquisition_date=None,
-                )
-                for c in copies
-            ] or [],
-        ).model_dump()
-
-    def _to_summary(self, r):
-        return BookSummarySchema(
-            biblio_id=r["biblio_id"],
-            title=r["title"],
-            authors=r.get("authors"),
-            edition=None,
-            cover_url=None,
-            available_copies=0,
-            total_copies=0,
-            lib_copies=0,
-            mat_copies=0,
-        )
+    def _to_summary(self, book):
+        return BookSummarySchema.model_validate(book)
 
     def _validate_sort_params(self, sort_by, sort_order):
         if sort_by not in ALLOWED_SORT_FIELDS:
