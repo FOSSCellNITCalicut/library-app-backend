@@ -14,7 +14,7 @@ class Settings(BaseSettings):
 
     # Delays, Retries & Timeouts
     AVAILABILITY_WORKER_DELAY: int = 10
-    METADATA_WORKER_DELAY: int = 5
+    METADATA_WORKER_DELAY: int = 2
     
     MAX_METADATA_RETRIES: int = 5
     MAX_AVAILABILITY_500_RETRIES: int = 5

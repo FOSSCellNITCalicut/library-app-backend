@@ -8,9 +8,9 @@ from fastapi import FastAPI
 from app.core.logging import configure_logging 
 from app.core.config import settings
 from app.integrations.koha.client import KohaClient
-from app.workers.availability_worker import AvailabilityWorker
-from app.workers.metadata_cleanup_worker import MetadataCleanupWorker
-from app.workers.metadata_worker import MetadataWorker
+from app.domains.sync.workers.availability_worker import AvailabilityWorker
+from app.domains.sync.workers.metadata_cleanup_worker import MetadataCleanupWorker
+from app.domains.sync.workers.metadata_worker import MetadataWorker
 
 __version__ = "0.1.0"
 

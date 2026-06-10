@@ -2,7 +2,7 @@ from sqlalchemy import case, func
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models.metadata_queue import MetadataQueue
+from app.db.models.metadata_queue import JobStatus, MetadataQueue
 
 
 async def enqueue_metadata_job(*, session: AsyncSession, biblio_id: int, priority: int = 0) -> None:
@@ -20,7 +20,7 @@ async def enqueue_metadata_job(*, session: AsyncSession, biblio_id: int, priorit
     stmt = insert(MetadataQueue).values(
         biblio_id=biblio_id,
         priority=priority,
-        status="pending",
+        status=JobStatus.PENDING,
     )
 
     stmt = stmt.on_conflict_do_update(
@@ -28,7 +28,7 @@ async def enqueue_metadata_job(*, session: AsyncSession, biblio_id: int, priorit
         set_={
             "priority": func.least(MetadataQueue.priority + priority, 100),
             "status": case(
-                (MetadataQueue.status == "completed", "pending"),
+                (MetadataQueue.status == JobStatus.COMPLETED, JobStatus.PENDING),
                 else_=MetadataQueue.status,
             ),
         },

@@ -42,7 +42,8 @@ class MetadataQueue(Base):
 
     status: Mapped[JobStatus] = mapped_column(
         Enum(JobStatus, values_callable=lambda obj: [e.value for e in obj]),
-        default=JobStatus.PENDING
+        default=JobStatus.PENDING,
+        server_default=JobStatus.PENDING.value,
     )
 
     available_at: Mapped[datetime] = mapped_column(

@@ -10,9 +10,9 @@ from sqlalchemy.orm import DeclarativeBase
 DATABASE_URL = settings.DATABASE_URL
 
 engine = create_async_engine(
-    DATABASE_URL, 
+    DATABASE_URL,
     pool_size=20,
-    max_overflow=10,
+    max_overflow=5,
     echo=False
 )
 

@@ -19,9 +19,7 @@ This starts:
 - `db` (Postgres 16) on `localhost:5432`
 - `api` on `localhost:8000`
 
-The `api` service bind-mounts the project source to `/app` and runs uvicorn with `--reload`, so code edits on the host are picked up by the worker loop and the HTTP server without rebuilding the image. 
-
-Anonymous volumes overlay `/app/app/__pycache__` and `/app/alembic/__pycache__` so the container's bytecode cache doesn't sync back into the host tree.
+The `api` service bind-mounts the project source to `/app` and runs uvicorn with `--reload`, so code edits on the host are picked up by the worker loop and the HTTP server without rebuilding the image.
 
 On startup the `api` process:
 
