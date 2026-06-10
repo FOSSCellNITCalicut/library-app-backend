@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import and_, delete
 
 from app.db.database import AsyncSessionLocal
-from app.db.models.metadata_queue import JobStatus, MetadataQueue
+from app.domains.sync.models import JobStatus, MetadataQueue
 
 
 logger = logging.getLogger(__name__)
