@@ -214,6 +214,12 @@ class TestSearchBooks:
         assert result["total"] == 0
         assert len(result["items"]) == 0
 
+    async def test_summary_item_has_branches(self, service):
+        result = await service.search_books(query="Gatsby")
+        item = result["items"][0]
+        assert "branches" in item
+        assert isinstance(item["branches"], list)
+
 
 @pytest.mark.asyncio
 class TestBrowseBooks:
@@ -235,13 +241,13 @@ class TestBrowseBooks:
 
     async def test_browse_sort_by_year_asc(self, service):
         result = await service.browse_books(sort_by="published_year", sort_order="asc")
-        years = [r["published_year"] for r in result["items"]]
-        assert years == sorted(years)
+        ids = [r["biblio_id"] for r in result["items"]]
+        assert ids == [4, 1, 3, 5, 2]
 
     async def test_browse_sort_by_year_desc(self, service):
         result = await service.browse_books(sort_by="published_year", sort_order="desc")
-        years = [r["published_year"] for r in result["items"]]
-        assert years == sorted(years, reverse=True)
+        ids = [r["biblio_id"] for r in result["items"]]
+        assert ids == [2, 5, 3, 1, 4]
 
     async def test_browse_pagination(self, service):
         result = await service.browse_books(page=1, per_page=2)
@@ -320,6 +326,8 @@ class TestBookDetails:
         assert detail["isbn"] == ["9780743273565"]
         assert "Fiction" in detail["categories"]
         assert detail["description"] is not None
+        assert detail["total_copies"] == 2
+        assert detail["available_copies"] == 1
 
     async def test_get_details_categories_is_list(self, service):
         detail = await service.get_book_details(1)
@@ -340,6 +348,12 @@ class TestBookDetails:
         detail = await service.get_book_details(1)
         assert isinstance(detail["isbn"], list)
         assert detail["isbn"] == ["9780743273565"]
+
+    async def test_detail_has_availability(self, service):
+        detail = await service.get_book_details(1)
+        assert "availability_synced_at" in detail
+        assert "total_copies" in detail
+        assert "available_copies" in detail
 
 
 @pytest.mark.asyncio

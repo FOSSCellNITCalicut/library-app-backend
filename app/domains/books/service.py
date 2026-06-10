@@ -3,8 +3,15 @@
 Called by:  router.py
 Calls:      repository.py
 
-Returns clean dict data that can be converted into Pydantic schemas.
+Returns clean dict data validated against Pydantic schemas.
 """
+
+from app.domains.books.schemas import (
+    BookCopySchema,
+    BookDetailSchema,
+    BookListResponse,
+    BookSummarySchema,
+)
 
 
 class ValidationError(Exception):
@@ -31,13 +38,11 @@ class BookService:
             raise ValidationError("ISBN must not be empty")
 
         results = await self._repository.search_by_isbn(isbn.strip())
+        items = [self._to_summary(r) for r in results]
 
-        return {
-            "items": results,
-            "page": 1,
-            "per_page": len(results) or 1,
-            "total": len(results),
-        }
+        return BookListResponse(
+            items=items, page=1, per_page=len(items) or 1, total=len(items),
+        ).model_dump()
 
     async def search_books(self, query, page=1, per_page=20):
         if not query or not query.strip():
@@ -55,12 +60,11 @@ class BookService:
             query=query, offset=offset, limit=per_page,
         )
 
-        return {
-            "items": results,
-            "page": page,
-            "per_page": per_page,
-            "total": total_count,
-        }
+        items = [self._to_summary(r) for r in results]
+
+        return BookListResponse(
+            items=items, page=page, per_page=per_page, total=total_count,
+        ).model_dump()
 
     async def browse_books(self, page=1, per_page=20, sort_by="title", sort_order="asc"):
         if page < 1:
@@ -78,14 +82,14 @@ class BookService:
             sort_by=sort_by, sort_order=sort_order,
         )
 
-        return {
-            "items": results,
-            "page": page,
-            "per_page": per_page,
-            "total": total_count,
-            "sort_by": sort_by,
-            "sort_order": sort_order,
-        }
+        items = [self._to_summary(r) for r in results]
+        base = BookListResponse(
+            items=items, page=page, per_page=per_page, total=total_count,
+        ).model_dump()
+
+        base["sort_by"] = sort_by
+        base["sort_order"] = sort_order
+        return base
 
     async def get_book_details(self, biblio_id):
         book = await self._repository.get_book_by_id(biblio_id)
@@ -97,24 +101,46 @@ class BookService:
         if isinstance(isbn_val, str):
             isbn_val = [isbn_val]
 
-        return {
-            "biblio_id": book["biblio_id"],
-            "title": book["title"],
-            "authors": book.get("authors", []),
-            "publisher": book.get("publisher"),
-            "published_year": book.get("published_year"),
-            "isbn": isbn_val,
-            "categories": book.get("categories", []),
-            "description": book.get("description"),
-            "copies": [
-                {
-                    "branch": c["branch"],
-                    "status": c["status"],
-                    "callnumber": c.get("call_number"),
-                }
+        return BookDetailSchema(
+            biblio_id=book["biblio_id"],
+            title=book["title"],
+            authors=book.get("authors"),
+            isbn=isbn_val,
+            publisher=book.get("publisher"),
+            published_year=book.get("published_year"),
+            edition=None,
+            description=book.get("description"),
+            cover_url=None,
+            categories=book.get("categories"),
+            total_copies=len(copies),
+            available_copies=sum(1 for c in copies if c.get("status") == "available"),
+            lib_copies=0,
+            mat_copies=0,
+            availability_synced_at=None,
+            copies=[
+                BookCopySchema(
+                    item_id=0,
+                    branch=c["branch"],
+                    callnumber=c.get("call_number"),
+                    status=c["status"],
+                    acquisition_date=None,
+                )
                 for c in copies
-            ],
-        }
+            ] or [],
+        ).model_dump()
+
+    def _to_summary(self, r):
+        return BookSummarySchema(
+            biblio_id=r["biblio_id"],
+            title=r["title"],
+            authors=r.get("authors"),
+            edition=None,
+            cover_url=None,
+            available_copies=0,
+            total_copies=0,
+            lib_copies=0,
+            mat_copies=0,
+        )
 
     def _validate_sort_params(self, sort_by, sort_order):
         if sort_by not in ALLOWED_SORT_FIELDS:
