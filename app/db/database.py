@@ -1,5 +1,8 @@
 from app.core.config import settings
 
+
+print("🔥 FINAL DATABASE URL =", settings.DATABASE_URL)
+
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
@@ -23,6 +26,6 @@ AsyncSessionLocal = async_sessionmaker(
 class Base(DeclarativeBase):
     pass
 
-def get_db():
-    with AsyncSessionLocal() as db:
+async def get_db():
+    async with AsyncSessionLocal() as db:
         yield db
