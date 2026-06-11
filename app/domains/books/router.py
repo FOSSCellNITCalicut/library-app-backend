@@ -8,7 +8,7 @@ from app.domains.books.service import (
     ServiceValidationError,   
 )
 #need repository file done to create service
-from app.domains.books.repository import BookRepository
+from app.domains.books.repository import BooksRepository
 from app.domains.books.schemas import (
     BookListResponse,
     BookDetailSchema,
@@ -25,7 +25,7 @@ def get_book_service(
     db: AsyncSession = Depends(get_db),
 ) -> BookService:
     
-    repository = BookRepository(db)
+    repository = BooksRepository(db)
     return BookService(repository)
 
 
