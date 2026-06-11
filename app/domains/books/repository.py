@@ -4,14 +4,15 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.db.models.book import Book
-from app.db.models.book_copy import BookCopy
-from app.domains.books.schemas import BookCopySchema, BookDetailSchema, BookSummarySchema
+from app.domains.books.models import Book
+# schema validations are done in service
 
-# Module-level sort map
+# Module-level sort map (according to service.py)
 SORT_MAP = {
-    "title": func.lower(Book.title).asc(),
-    "date_added": Book.created_at.desc(),
+    "title": func.lower(Book.title),
+    "authors": Book.authors,
+    "published_year": Book.published_year,
+    "publisher": Book.publisher,
 }
 
 
@@ -22,9 +23,9 @@ class BooksRepository:
     async def search_books(
         self,
         query: str,
-        page: int,
-        per_page: int,
-    ) -> tuple[list[BookSummarySchema], int]:
+        offset: int, # service passes offset and limit
+        limit: int,
+    ) -> tuple[list[dict], int]:
         """Full-text search over books.search_vector, ranked by relevance.
 
         Returns a (items, total_count) tuple. total_count is the number of
@@ -49,54 +50,54 @@ class BooksRepository:
             )
             .where(Book.search_vector.op("@@")(ts_query))
             .order_by(rank_expr.desc())
-            .offset((page - 1) * per_page)
-            .limit(per_page)
+            .offset(offset)
+            .limit(limit)
         )
 
         rows = (await self.db.execute(stmt)).mappings().all()
         total = rows[0]["total_count"] if rows else 0
-        items = [BookSummarySchema(**row) for row in rows]
-        return (items, total)
+        # service will do the validation
+        return (list(rows), total)
 
     async def browse_books(
         self,
-        page: int,
-        per_page: int,
-        sort_by: str | None = None,
-        branch: str | None = None,
-    ) -> tuple[list[BookSummarySchema], int]:
+        offset: int,
+        limit: int,
+        sort_by: str = "title",
+        sort_order: str = "asc",
+    ) -> tuple[list[dict], int]:
         """Browse the full catalogue with optional sort and branch filter.
 
         Returns a (items, total_count) tuple.
         """
-        order_clause = SORT_MAP.get(sort_by, Book.biblio_id.asc())
+        sort_col = SORT_MAP.get(sort_by, func.lower(Book.title))
+        order_clause = sort_col.asc() if sort_order == "asc" else sort_col.desc()
 
-        stmt = select(
-            Book.biblio_id,
-            Book.title,
-            Book.authors,
-            Book.edition,
-            Book.cover_url,
-            Book.available_copies,
-            Book.total_copies,
-            Book.lib_copies,
-            Book.mat_copies,
-            func.count().over().label("total_count"),
+        stmt = (
+                select(
+                Book.biblio_id,
+                Book.title,
+                Book.authors,
+                Book.edition,
+                Book.cover_url,
+                Book.available_copies,
+                Book.total_copies,
+                Book.lib_copies,
+                Book.mat_copies,
+                func.count().over().label("total_count"),
+            )
+            .order_by(order_clause)
+            .offset(offset)
+            .limit(limit)
         )
 
-        if branch == "LIB":
-            stmt = stmt.where(Book.lib_copies > 0)
-        elif branch == "MAT":
-            stmt = stmt.where(Book.mat_copies > 0)
-
-        stmt = stmt.order_by(order_clause).offset((page - 1) * per_page).limit(per_page)
+        # branch is not passed from service
 
         rows = (await self.db.execute(stmt)).mappings().all()
         total = rows[0]["total_count"] if rows else 0
-        items = [BookSummarySchema(**row) for row in rows]
-        return (items, total)
+        return (list(rows), total)
 
-    async def get_book_by_id(self, biblio_id: int) -> BookDetailSchema | None:
+    async def get_book_by_id(self, biblio_id: int) -> Book | None:
         """Fetch a single book with all its physical copies.
 
         Uses selectinload so copies are fetched in a second targeted query
@@ -108,9 +109,26 @@ class BooksRepository:
             .options(selectinload(Book.copies))
             .where(Book.biblio_id == biblio_id)
         )
-        book = (await self.db.execute(stmt)).scalar_one_or_none()
+        # service will do the validation
+        return (await self.db.execute(stmt)).scalar_one_or_none()
+    
+    async def search_by_isbn(self, isbn: str) -> list[dict]:
+        """Fetch book summaries by exact ISBN match."""
+        stmt = (
+            select(
+                Book.biblio_id,
+                Book.title,
+                Book.authors,
+                Book.edition,
+                Book.cover_url,
+                Book.available_copies,
+                Book.total_copies,
+                Book.lib_copies,
+                Book.mat_copies,
+            )
+            .where(Book.isbn == isbn)
+        )
+        
+        rows = (await self.db.execute(stmt)).mappings().all()
+        return list(rows)
 
-        if book is None:
-            return None
-
-        return BookDetailSchema.model_validate(book)
