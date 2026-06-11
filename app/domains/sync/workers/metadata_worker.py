@@ -7,8 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.db.database import AsyncSessionLocal
-from app.db.models import Book, MetadataQueue
-from app.db.models.metadata_queue import JobStatus
+from app.domains.books.models import Book
+from app.domains.sync.models import JobStatus, MetadataQueue
 from app.domains.sync.marc_parser import marc_parser
 from app.integrations.koha.client import KohaClient, koha_client
 

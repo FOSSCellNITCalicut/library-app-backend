@@ -9,7 +9,10 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from alembic import context
 
 from app.core.config import settings
-from app.db.models import Base
+from app.db.database import Base
+
+import app.domains.books.models  # noqa: F401  registers tables with Base.metadata
+import app.domains.sync.models  # noqa: F401
 
 import alembic_postgresql_enum # Import the package to ensure it registers the event listeners for handling Enum types
 

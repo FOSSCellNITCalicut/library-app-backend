@@ -2,7 +2,7 @@ from sqlalchemy import case, func
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models.metadata_queue import JobStatus, MetadataQueue
+from app.domains.sync.models import JobStatus, MetadataQueue
 
 
 async def enqueue_metadata_job(*, session: AsyncSession, biblio_id: int, priority: int = 0) -> None:
