@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import func, select
+from sqlalchemy import any_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -126,7 +126,7 @@ class BooksRepository:
                 Book.lib_copies,
                 Book.mat_copies,
             )
-            .where(Book.isbn == isbn)
+            .where(isbn == any_(Book.isbn))
         )
         
         rows = (await self.db.execute(stmt)).mappings().all()
