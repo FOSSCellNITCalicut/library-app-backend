@@ -8,7 +8,7 @@ from app.domains.books.service import (
     ServiceValidationError,   
 )
 #need repository file done to create service
-from app.domains.books.repository import BookRepository
+from app.domains.books.repository import BooksRepository
 from app.domains.books.schemas import (
     BookListResponse,
     BookDetailSchema,
@@ -25,7 +25,7 @@ def get_book_service(
     db: AsyncSession = Depends(get_db),
 ) -> BookService:
     
-    repository = BookRepository(db)
+    repository = BooksRepository(db)
     return BookService(repository)
 
 
@@ -109,6 +109,35 @@ async def search_books(
         )
 
     except ServiceValidationError as e:              
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+
+
+@router.get(
+    "/search/isbn",
+    response_model=BookListResponse,
+    status_code=status.HTTP_200_OK,
+    responses={
+        200: {"description": "ISBN search results returned successfully"},
+        400: {"description": "Invalid ISBN query"},
+        500: {"description": "Internal server error"},
+    },
+)
+async def search_by_isbn(
+    service: BookService = Depends(get_book_service),
+    q: str = Query(
+        ...,
+        min_length=1,
+        max_length=20,
+        description="ISBN to search for (10 or 13 digits, with or without hyphens)",
+    ),
+):
+    try:
+        return await service.search_by_isbn(isbn=q)
+
+    except ServiceValidationError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
