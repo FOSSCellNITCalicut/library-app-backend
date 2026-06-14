@@ -1,0 +1,361 @@
+# Redis Session & Account Cache Design
+
+## Overview
+
+Koha remains the **single source of truth**.
+
+Redis is used for:
+
+* Session management
+* Fast account page loading
+* Loan information caching
+* Fine information caching
+* Instant book ownership checks for Book Detail page
+
+---
+
+# 1. Session Store
+
+## Key
+
+```text
+session:{roll_no}
+```
+
+Example:
+
+```text
+session:B240123CS
+```
+
+## Value
+
+```json
+{
+  "cgisessid": "abc123xyz",
+
+  "user": {
+    "patron_id": 33419,
+    "roll_no": "B210123CS",
+    "name": "ADARSH P A",
+    "branch_code": "LIB",
+    "category_code": "UG"
+  },
+
+  "expires_at": "2026-06-15T10:00:00Z"
+}
+```
+
+## TTL
+
+```text
+24 hours
+```
+
+## Purpose
+
+```text
+JWT
+ ↓
+roll_no
+ ↓
+Redis Session
+ ↓
+CGISESSID
+ ↓
+Koha
+```
+
+---
+
+# 2. Account Cache
+
+## Key
+
+```text
+account:{roll_no}
+```
+
+Example:
+
+```text
+account:B210001CS
+```
+
+## Value
+
+```json
+{
+  "user": {
+    "patron_id": 33419,
+    "roll_no": "B210001CS",
+    "name": "ADARSH P A",
+    "branch_code": "LIB",
+    "category_code": "UG"
+  },
+
+  "loan_summary": {
+    "loan_count": 3,
+    "loan_limit": 8
+  },
+
+  "fine_summary": {
+    "outstanding_fine": 150
+  },
+
+  "checked_out_biblio_ids": [
+    1234,
+    5678,
+    9012
+  ],
+
+  "checked_out_books": [
+    {
+      "biblio_id": 1234,
+      "title": "Operating Systems",
+      "due_date": "2026-06-20",
+      "renewals_left": 2
+    },
+    {
+      "biblio_id": 5678,
+      "title": "Computer Networks",
+      "due_date": "2026-06-25",
+      "renewals_left": 1
+    }
+  ],
+
+  "fine_history": [
+    {
+      "amount": 50,
+      "date": "2026-01-10",
+      "status": "Paid"
+    },
+    {
+      "amount": 100,
+      "date": "2026-05-01",
+      "status": "Unpaid"
+    }
+  ],
+
+  "last_synced_at": "2026-06-14T10:00:00Z"
+}
+```
+
+## TTL
+
+```text
+15-30 minutes
+```
+
+## Purpose
+
+Used to serve:
+
+* Profile page
+* Borrowed books page
+* Fine summary
+* Fine history
+
+without contacting Koha on every request.
+
+---
+
+# 3. Borrowed Books Set
+
+## Key
+
+```text
+borrowed_books:{roll_no}
+```
+
+Example:
+
+```text
+borrowed_books:B210001CS
+```
+
+## Redis Set Members
+
+```text
+1234
+5678
+9012
+```
+
+Where each member is a `biblio_id`.
+
+---
+
+## Purpose
+
+Used for Book Detail page.
+
+### Check if current user has borrowed the book
+
+```python
+redis.sismember(
+    f"borrowed_books:{roll_no}",
+    biblio_id
+)
+```
+
+### UI Logic
+
+```text
+If borrowed:
+    Show Renew button
+
+Else:
+    Show Check Availability button
+```
+
+This avoids a Koha request every time a Book Detail page is opened.
+
+---
+
+# API Usage
+
+## GET /account
+
+Returns:
+
+```json
+{
+  "name": "ADARSH P A",
+  "loan_count": 3,
+  "loan_limit": 8,
+  "outstanding_fine": 150
+}
+```
+
+Source:
+
+```text
+account:{roll_no}
+```
+
+---
+
+## GET /loans
+
+Returns:
+
+```json
+{
+  "items": [...]
+}
+```
+
+Source:
+
+```text
+checked_out_books
+```
+
+---
+
+## GET /fines/history
+
+Returns:
+
+```json
+{
+  "items": [...]
+}
+```
+
+Source:
+
+```text
+fine_history
+```
+
+---
+
+## GET /books/{biblio_id}/user-status
+
+Returns:
+
+```json
+{
+  "borrowed_by_current_user": true
+}
+```
+
+Source:
+
+```text
+borrowed_books:{roll_no}
+```
+
+---
+
+# Data Flow
+
+## Login
+
+```text
+Flutter
+ ↓
+Backend
+ ↓
+Koha Login
+ ↓
+Receive CGISESSID
+ ↓
+Fetch Account Page
+ ↓
+Parse User Info
+ ↓
+Parse Loans
+ ↓
+Parse Fines
+ ↓
+Store in Redis
+ ↓
+Issue JWT
+```
+
+---
+
+## Profile Page
+
+```text
+Flutter
+ ↓
+GET /account
+ ↓
+Redis
+ ↓
+Response
+```
+
+No Koha request required.
+
+---
+
+## Book Detail Page
+
+```text
+Flutter
+ ↓
+GET /books/{biblio_id}/user-status
+ ↓
+Redis Set Lookup
+ ↓
+Response
+```
+
+No Koha request required.
+
+---
+
+# Notes
+
+* Do NOT store user passwords.
+* Do NOT duplicate loans/fines in PostgreSQL.
+* Koha remains the source of truth.
+* Redis acts only as a session and performance cache.
+* Availability checks and renewals should still contact Koha live.
+
+NOTE: There is a collection of 'your items' in home page, I'm not sure if it is currently checked out books or a history. If it is current, we can use /loans endpoint
