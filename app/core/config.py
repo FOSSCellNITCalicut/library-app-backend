@@ -4,8 +4,19 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     # Koha API Specific
     KOHA_BASE_URL: str = "https://opac.nitc.ac.in/api/v1/public"
+    KOHA_OPAC_URL: str = "https://opac.nitc.ac.in"  # base URL for opac-user.pl (CGI auth)
     KOHA_USERNAME: str | None = None
     KOHA_PASSWORD: str | None = None
+
+    # Auth / JWT
+    JWT_SECRET_KEY: str  # required -- set in .env, never hardcode
+    JWT_ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_TTL_MINUTES: int = 15
+    REFRESH_TOKEN_TTL_DAYS: int = 7
+
+    # AES-GCM key for encrypting stored credentials (remember me)
+    # Must be a 32-byte hex string (64 hex chars). Generate with: openssl rand -hex 32
+    CREDS_ENCRYPTION_KEY: str | None = None  # optional; required only if remember-me is enabled
     
     ITEMS_PER_PAGE: int = 500
 

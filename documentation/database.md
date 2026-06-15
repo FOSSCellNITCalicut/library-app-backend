@@ -36,12 +36,12 @@ CREATE TABLE books (
     mat_copies INT DEFAULT 0,
     
     -- Sync metadata 
-    metadata_synced_at TIMESTAMPZ,
-    availability_synced_at TIMESTAMPZ,
+    metadata_synced_at TIMESTAMPTZ,
+    availability_synced_at TIMESTAMPTZ,
     
      -- Audit fields 
-     created_at TIMESTAMPZ DEFAULT NOW(),
-     updated_at TIMESTAMPZ DEFAULT NOW()
+     created_at TIMESTAMPTZ DEFAULT NOW(),
+     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 ```
 
@@ -73,8 +73,8 @@ CREATE TABLE book_copies (
     status VARCHAR(50) NOT NULL,
 
     -- Audit Fields
-    updated_at TIMESTAMPZ DEFAULT NOW(),
-    last_seen_at TIMESTAMPZ DEFAULT NOW()
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    last_seen_at TIMESTAMPTZ DEFAULT NOW()
 );
 ```
 
@@ -170,3 +170,36 @@ FOR EACH ROW EXECUTE FUNCTION recompute_book_aggregates();
 ```
 
 Branch codes are hardcoded for now (`'LIB'` and `'MAT'`). If NITC adds new branches, this trigger needs a migration to update the `FILTER` clauses, or a `library_branches` lookup table should be introduced.
+
+---
+
+**5. users**
+
+Stores one row per logged-in user. Created on login, deleted on logout.
+
+```sql
+CREATE TABLE users (
+    roll_no TEXT PRIMARY KEY,
+
+    -- Koha session
+    cgisessid TEXT NOT NULL,
+    name TEXT NOT NULL,
+
+    -- Optional: only present when the user checked "remember me"
+    -- AES-GCM encrypted blob of {roll_no, password}. Decrypted in-memory only.
+    creds_enc BYTEA,
+
+    -- Refresh token: we store only a bcrypt hash, never the raw token.
+    -- If the DB is breached, the hash alone cannot be used to call /auth/refresh.
+    refresh_token_hash TEXT NOT NULL,
+
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+```
+
+`roll_no` is the primary key because one user can only have one active session at a time. A second login from a different device overwrites the previous session (single active session per user).
+
+`refresh_token_hash` is a bcrypt hash. On `/auth/refresh`, the backend hashes the incoming refresh token and compares it to this column. On token rotation, the old hash is replaced with the new hash atomically.
+
+`cgisessid` is the Koha OPAC session cookie. It is never sent to the mobile client -- it stays on the server side and is used only for backend-to-Koha requests.
