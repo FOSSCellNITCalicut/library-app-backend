@@ -1,6 +1,8 @@
+import asyncio
 import logging
 import secrets
 from datetime import datetime, timedelta, timezone
+from typing import Awaitable, Callable, TypeVar
 
 import bcrypt
 import httpx
@@ -11,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.domains.auth.crypto import CredsEncryptionUnavailable, decrypt_password, encrypt_password
 from app.domains.auth.models import User
 
 logger = logging.getLogger(__name__)
@@ -23,7 +26,19 @@ _KOHA_LOGIN_URL = f"{settings.KOHA_OPAC_URL}/cgi-bin/koha/opac-user.pl"
 # ---------------------------------------------------------------------------
 
 class KohaAuthError(Exception):
-    """Raised when Koha rejects credentials."""
+    """Raised when Koha rejects credentials. Never retried -- retrying a
+    wrong password just hammers Koha for no benefit."""
+
+
+class KohaSessionExpired(Exception):
+    """
+    Raised by Koha-authenticated calls (future user-domain endpoints: checkouts,
+    renew, holds, fines) when the stored CGISESSID is no longer valid -- e.g.
+    Koha returned its login page instead of the expected data.
+
+    call_with_koha_retry() catches this, re-authenticates using stored
+    "remember me" credentials if available, and retries once.
+    """
 
 
 async def _koha_login(roll_no: str, password: str) -> tuple[str, str]:
@@ -34,36 +49,70 @@ async def _koha_login(roll_no: str, password: str) -> tuple[str, str]:
     on failure (renders the login form again). This is a web-app convention,
     not a REST convention.
 
+    Retries up to MAX_KOHA_LOGIN_RETRIES times on transient failures only:
+    connection errors, timeouts, and 5xx responses. A 200 (wrong credentials)
+    is a definitive answer and is never retried.
+
     Returns (cgisessid, display_name).
     Raises KohaAuthError on invalid credentials.
-    Raises httpx.HTTPError on network/server failures.
+    Raises HTTPException(502) if Koha is unreachable after all retries.
     """
-    async with httpx.AsyncClient(follow_redirects=False, timeout=10) as client:
-        response = await client.post(
-            _KOHA_LOGIN_URL,
-            data={
-                "userid": roll_no,
-                "password": password,
-                "koha_login_context": "opac",
-            },
-        )
+    last_error: Exception | None = None
 
-    if response.status_code == 200:
-        # Koha returned the login page -- credentials are wrong.
-        raise KohaAuthError("Invalid credentials")
+    for attempt in range(1, settings.MAX_KOHA_LOGIN_RETRIES + 1):
+        try:
+            async with httpx.AsyncClient(
+                follow_redirects=False, timeout=settings.KOHA_LOGIN_TIMEOUT_SECONDS
+            ) as client:
+                response = await client.post(
+                    _KOHA_LOGIN_URL,
+                    data={
+                        "userid": roll_no,
+                        "password": password,
+                        "koha_login_context": "opac",
+                    },
+                )
+        except (httpx.ConnectError, httpx.TimeoutException) as exc:
+            last_error = exc
+            logger.warning(
+                "Koha login attempt %d/%d for %s failed: %s",
+                attempt, settings.MAX_KOHA_LOGIN_RETRIES, roll_no, exc,
+            )
+            if attempt < settings.MAX_KOHA_LOGIN_RETRIES:
+                await asyncio.sleep(2 ** (attempt - 1))  # 1s, 2s, 4s...
+                continue
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Koha is unreachable") from exc
 
-    cgisessid = response.cookies.get("CGISESSID")
-    if not cgisessid:
-        # Redirect happened but no session cookie -- unexpected Koha state.
-        logger.error(
-            "Koha login for %s returned %s but no CGISESSID cookie",
-            roll_no,
-            response.status_code,
-        )
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Koha session error")
+        if response.status_code == 200:
+            # Koha returned the login page -- credentials are wrong. Don't retry.
+            raise KohaAuthError("Invalid credentials")
 
-    name = await _fetch_koha_display_name(cgisessid, roll_no)
-    return cgisessid, name
+        if response.status_code >= 500:
+            last_error = httpx.HTTPStatusError("Koha server error", request=response.request, response=response)
+            logger.warning(
+                "Koha login attempt %d/%d for %s got %s",
+                attempt, settings.MAX_KOHA_LOGIN_RETRIES, roll_no, response.status_code,
+            )
+            if attempt < settings.MAX_KOHA_LOGIN_RETRIES:
+                await asyncio.sleep(2 ** (attempt - 1))
+                continue
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Koha server error") from last_error
+
+        cgisessid = response.cookies.get("CGISESSID")
+        if not cgisessid:
+            # Redirect happened but no session cookie -- unexpected Koha state, not transient.
+            logger.error(
+                "Koha login for %s returned %s but no CGISESSID cookie",
+                roll_no,
+                response.status_code,
+            )
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Koha session error")
+
+        name = await _fetch_koha_display_name(cgisessid, roll_no)
+        return cgisessid, name
+
+    # Unreachable in practice -- the loop always returns or raises -- but keeps type checkers happy.
+    raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Koha is unreachable") from last_error
 
 
 async def _fetch_koha_display_name(cgisessid: str, fallback: str) -> str:
@@ -191,13 +240,25 @@ async def login(roll_no: str, password: str, remember_me: bool, db: AsyncSession
 
     refresh_hash = _hash_token(jti)
 
+    creds_enc = None
+    if remember_me:
+        try:
+            creds_enc = encrypt_password(password)
+        except CredsEncryptionUnavailable:
+            # Server isn't configured for remember-me (CREDS_ENCRYPTION_KEY unset).
+            # Don't fail the whole login over an optional feature -- just skip it.
+            logger.warning(
+                "remember_me requested for %s but CREDS_ENCRYPTION_KEY is not configured -- skipping",
+                roll_no,
+            )
+
     # Merge = INSERT or UPDATE. One row per user; a new login overwrites the old session.
     user = User(
         roll_no=roll_no,
         cgisessid=cgisessid,
         name=name,
         refresh_token_hash=refresh_hash,
-        creds_enc=None,  # remember_me encryption is a follow-up task
+        creds_enc=creds_enc,
     )
     await db.merge(user)
     await db.commit()
@@ -261,3 +322,73 @@ async def logout(roll_no: str, db: AsyncSession) -> None:
     if user:
         await db.delete(user)
         await db.commit()
+
+
+# ---------------------------------------------------------------------------
+# Remember-me: transparent re-authentication on stale Koha session
+#
+# Nothing in this codebase calls Koha with a stored CGISESSID yet -- the
+# protected endpoints (checkouts, renew, holds, fines) listed in
+# documentation/auth.md haven't been built. This is the reusable plumbing
+# those endpoints will call into once they exist.
+# ---------------------------------------------------------------------------
+
+async def reauthenticate(user: User, db: AsyncSession) -> str:
+    """
+    Re-login to Koha using the user's stored encrypted credentials, used when
+    their CGISESSID has gone stale. Updates the stored cgisessid + name.
+
+    Raises HTTPException(401) if the user never enabled remember-me (no
+    creds_enc) -- the caller should surface this as "please log in again".
+    """
+    if user.creds_enc is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session expired, please log in again")
+
+    password = decrypt_password(user.creds_enc)
+
+    try:
+        cgisessid, name = await _koha_login(user.roll_no, password)
+    except KohaAuthError as exc:
+        # Stored credentials no longer work (e.g. password changed on Koha's side).
+        # Drop them so we don't keep retrying a doomed re-auth.
+        user.creds_enc = None
+        await db.commit()
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session expired, please log in again") from exc
+
+    user.cgisessid = cgisessid
+    user.name = name
+    await db.commit()
+    return cgisessid
+
+
+_T = TypeVar("_T")
+
+
+async def call_with_koha_retry(roll_no: str, db: AsyncSession, koha_call: Callable[[str], Awaitable[_T]]) -> _T:
+    """
+    Run a Koha-authenticated call, transparently re-authenticating once if it
+    signals a stale session.
+
+    `koha_call` receives the current cgisessid and should raise
+    KohaSessionExpired if Koha's response indicates the session is no longer
+    valid (e.g. it served the login page instead of the expected data).
+
+    Usage (future user-domain endpoints):
+        async def _fetch_checkouts(cgisessid: str) -> list[Checkout]:
+            response = await client.get(..., cookies={"CGISESSID": cgisessid})
+            if "login" in response.url.path:
+                raise KohaSessionExpired()
+            return parse(response)
+
+        checkouts = await call_with_koha_retry(roll_no, db, _fetch_checkouts)
+    """
+    result = await db.execute(select(User).where(User.roll_no == roll_no))
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session not found")
+
+    try:
+        return await koha_call(user.cgisessid)
+    except KohaSessionExpired:
+        new_cgisessid = await reauthenticate(user, db)
+        return await koha_call(new_cgisessid)

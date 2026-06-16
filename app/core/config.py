@@ -17,7 +17,11 @@ class Settings(BaseSettings):
     # AES-GCM key for encrypting stored credentials (remember me)
     # Must be a 32-byte hex string (64 hex chars). Generate with: openssl rand -hex 32
     CREDS_ENCRYPTION_KEY: str | None = None  # optional; required only if remember-me is enabled
-    
+
+    # Koha login retries -- transient network/5xx failures only, never on wrong credentials
+    MAX_KOHA_LOGIN_RETRIES: int = 3
+    KOHA_LOGIN_TIMEOUT_SECONDS: float = 10.0
+
     ITEMS_PER_PAGE: int = 500
 
     # Seed Data
