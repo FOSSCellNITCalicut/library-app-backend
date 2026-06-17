@@ -13,6 +13,7 @@ from app.db.database import Base
 
 import app.domains.books.models  # noqa: F401  registers tables with Base.metadata
 import app.domains.sync.models  # noqa: F401
+import app.domains.auth.models  # noqa: F401
 
 import alembic_postgresql_enum # Import the package to ensure it registers the event listeners for handling Enum types
 

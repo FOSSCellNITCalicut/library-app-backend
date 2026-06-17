@@ -76,6 +76,8 @@ Steps:
 
 4. Koha responds. A **non-200 status code** indicates login success (Koha returns a redirect on successful auth). A **200 status** means credentials are invalid.
 
+   If Koha is unreachable (connection error, timeout) or returns a 5xx, the backend retries up to `MAX_KOHA_LOGIN_RETRIES` (default 3) times with exponential backoff (1s, 2s, ...) before giving up with `502 Bad Gateway`. A 200 response (wrong credentials) is never retried -- it's a definitive answer, not a transient failure.
+
 5. Backend extracts the `CGISESSID` cookie from Koha's response headers. This is the session token for all subsequent Koha API calls.
 
 6. Backend makes a follow-up GET request to `opac-user.pl` with the CGISESSID cookie to fetch the user's display name from Koha's HTML response.
@@ -219,14 +221,18 @@ If a revoked refresh token is submitted:
 
 When "remember me" is enabled during login:
 
-- Backend encrypts the user's credentials using AES-GCM with a server-side secret key
-- Encrypted credentials are stored in the database alongside the session
-- When the Koha CGISESSID session expires mid-action, the backend:
-  1. Decrypts the stored credentials
-  2. Re-authenticates with Koha
+- Backend encrypts the user's **password** (not the roll number -- that's already the row's primary key) using AES-GCM with a server-side secret key (`CREDS_ENCRYPTION_KEY`)
+- The encrypted blob is stored in `creds_enc` alongside the session
+- If `CREDS_ENCRYPTION_KEY` isn't configured on the server, `remember_me` is silently ignored (a warning is logged) rather than failing the login -- it's an optional feature, not a hard dependency
+- A plain login (`remember_me: false`, or omitted) clears any previously stored `creds_enc` for that user
+
+When a Koha-authenticated call detects a stale CGISESSID, the re-authentication helper:
+  1. Decrypts the stored password
+  2. Re-authenticates with Koha (reusing the same retry logic as `/login`)
   3. Updates the stored CGISESSID
-  4. Retries the original request
-- This process is transparent to the mobile client
+  4. Retries the original request once
+
+This is transparent to the mobile client. **Implementation note:** this re-authentication plumbing (`reauthenticate()` / `call_with_koha_retry()` in `app/domains/auth/service.py`) exists now, but nothing calls it yet -- the Koha-backed protected endpoints in the table below (`/user/checkouts`, `/user/renew`, etc.) haven't been built. Those endpoints should wrap their Koha calls with `call_with_koha_retry()` once implemented.
 
 ---
 
