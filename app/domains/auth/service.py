@@ -119,6 +119,10 @@ async def fetch_and_parse_account_page(cgisessid: str, roll_no: str) -> AccountP
     """
     GET the authenticated Koha OPAC user page and parse all user data.
     Returns AccountPageData with name, email, checkouts, fines, etc.
+
+    Raises KohaSessionExpired when Koha returns the login page instead of
+    account data (stale CGISESSID). call_with_koha_retry() catches this and
+    transparently re-authenticates before retrying.
     """
     try:
         async with httpx.AsyncClient(timeout=10) as client:
@@ -126,7 +130,11 @@ async def fetch_and_parse_account_page(cgisessid: str, roll_no: str) -> AccountP
                 _KOHA_LOGIN_URL,
                 cookies={"CGISESSID": cgisessid},
             )
+        if "koha_login_context" in response.text:
+            raise KohaSessionExpired()
         return parse_account_page(response.text, roll_no)
+    except KohaSessionExpired:
+        raise
     except Exception:
         logger.warning(
             "Could not fetch or parse account page from Koha for roll_no=%s",
@@ -140,6 +148,10 @@ async def fetch_and_parse_charges_page(cgisessid: str, roll_no: str) -> AccountP
     GET the authenticated Koha OPAC charges page (opac-account.pl)
     and parse fine/charge data.
     Returns AccountPageData with outstanding_fine and fine_history populated.
+
+    Raises KohaSessionExpired when Koha returns the login page instead of
+    account data (stale CGISESSID). call_with_koha_retry() catches this and
+    transparently re-authenticates before retrying.
     """
     try:
         async with httpx.AsyncClient(timeout=10) as client:
@@ -147,7 +159,11 @@ async def fetch_and_parse_charges_page(cgisessid: str, roll_no: str) -> AccountP
                 _KOHA_CHARGES_URL,
                 cookies={"CGISESSID": cgisessid},
             )
+        if "koha_login_context" in response.text:
+            raise KohaSessionExpired()
         return parse_charges_page(response.text, roll_no)
+    except KohaSessionExpired:
+        raise
     except Exception:
         logger.warning(
             "Could not fetch or parse charges page from Koha for roll_no=%s",
@@ -360,11 +376,6 @@ async def logout(roll_no: str, db: AsyncSession) -> None:
 
 # ---------------------------------------------------------------------------
 # Remember-me: transparent re-authentication on stale Koha session
-#
-# Nothing in this codebase calls Koha with a stored CGISESSID yet -- the
-# protected endpoints (checkouts, renew, holds, fines) listed in
-# documentation/auth.md haven't been built. This is the reusable plumbing
-# those endpoints will call into once they exist.
 # ---------------------------------------------------------------------------
 
 async def reauthenticate(user: User, db: AsyncSession) -> str:
