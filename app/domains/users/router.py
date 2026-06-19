@@ -7,6 +7,7 @@ from app.db.database import get_db
 from app.domains.auth.dependencies import get_current_user
 from app.domains.users import service
 from app.domains.users.schemas import (
+    AccountActivityResponse,
     BookStatusResponse,
     FineHistoryResponse,
     FinesResponse,
@@ -31,6 +32,11 @@ async def user_fines(claims: Annotated[dict, Depends(get_current_user)], db: DB)
 @router.get("/fines/history", response_model=FineHistoryResponse)
 async def user_fines_history(claims: Annotated[dict, Depends(get_current_user)], db: DB):
     return await service.get_fines_history(roll_no=claims["sub"], db=db)
+
+
+@router.get("/account/activity", response_model=AccountActivityResponse)
+async def user_account_activity(claims: Annotated[dict, Depends(get_current_user)], db: DB):
+    return await service.get_account_activity(roll_no=claims["sub"], db=db)
 
 
 @router.get("/book-status/{biblio_id}", response_model=BookStatusResponse)

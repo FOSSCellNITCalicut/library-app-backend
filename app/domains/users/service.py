@@ -6,6 +6,7 @@ from app.domains.auth.service import (
     fetch_and_parse_charges_page,
 )
 from app.domains.users.schemas import (
+    AccountActivityResponse,
     BookStatusResponse,
     CheckedOutBook,
     FineHistoryResponse,
@@ -50,9 +51,29 @@ async def get_fines(roll_no: str, db: AsyncSession) -> FinesResponse:
 
 
 async def get_fines_history(roll_no: str, db: AsyncSession) -> FineHistoryResponse:
+    """Return only actual fines (amount > 0)."""
     async def _fetch(cgisessid: str) -> FineHistoryResponse:
         account = await fetch_and_parse_charges_page(cgisessid, roll_no)
         return FineHistoryResponse(
+            items=[
+                FineHistoryItem(
+                    amount=item.amount,
+                    date=item.date,
+                    status=item.status,
+                )
+                for item in account.fine_history
+                if item.amount > 0
+            ],
+        )
+
+    return await call_with_koha_retry(roll_no, db, _fetch)
+
+
+async def get_account_activity(roll_no: str, db: AsyncSession) -> AccountActivityResponse:
+    """Return all account transactions including zero-amount (returns, payments)."""
+    async def _fetch(cgisessid: str) -> AccountActivityResponse:
+        account = await fetch_and_parse_charges_page(cgisessid, roll_no)
+        return AccountActivityResponse(
             items=[
                 FineHistoryItem(
                     amount=item.amount,

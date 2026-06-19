@@ -10,7 +10,7 @@ import sys
 import json
 import httpx
 
-BASE = "http://localhost:8001"
+BASE = "http://localhost:8000"
 
 
 def req(method, path, token=None, json_body=None):
@@ -110,6 +110,7 @@ def main():
         failed += 1
 
     # ------------- /user/book-status/{id} -------------
+    # ------------- /user/book-status/{id} -------------
     if biblio_id:
         section("6. GET /user/book-status/{biblio_id}")
         s, data = req("get", f"/api/v1/user/book-status/{biblio_id}", token=access)
@@ -121,8 +122,17 @@ def main():
     else:
         print("\n  ⏭️  Skipping /user/book-status (no biblio_id provided)")
 
+    # ------------- /user/account/activity -------------
+    section("7. GET /user/account/activity")
+    s, data = req("get", "/api/v1/user/account/activity", token=access)
+    if check("GET /user/account/activity", s, 200, data):
+        assert "items" in data
+        passed += 1
+    else:
+        failed += 1
+
     # ------------- /auth/refresh -------------
-    section("7. POST /auth/refresh")
+    section("8. POST /auth/refresh")
     s, data = req("post", "/api/v1/auth/refresh", json_body={
         "refresh_token": refresh,
     })
@@ -134,7 +144,7 @@ def main():
         sys.exit(1)
 
     # ------------- /user/me with new token -------------
-    section("8. GET /user/me (after refresh)")
+    section("9. GET /user/me (after refresh)")
     s, data = req("get", "/api/v1/user/me", token=new_access)
     if check("GET /user/me (fresh token)", s, 200, data):
         passed += 1
@@ -142,7 +152,7 @@ def main():
         failed += 1
 
     # ------------- /auth/logout -------------
-    section("9. POST /auth/logout")
+    section("10. POST /auth/logout")
     s, data = req("post", "/api/v1/auth/logout", token=new_access)
     if check("POST /auth/logout", s, 200):
         passed += 1
@@ -150,7 +160,7 @@ def main():
         failed += 1
 
     # ------------- Verify old token dead -------------
-    section("10. GET /user/me (after logout - should fail)")
+    section("11. GET /user/me (after logout - should fail)")
     s, data = req("get", "/api/v1/user/me", token=new_access)
     if check("GET /user/me (logged out)", s, 401):
         passed += 1

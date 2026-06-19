@@ -35,5 +35,9 @@ class FineHistoryResponse(BaseModel):
     items: list[FineHistoryItem]
 
 
+class AccountActivityResponse(BaseModel):
+    items: list[FineHistoryItem]
+
+
 class BookStatusResponse(BaseModel):
     borrowed_by_current_user: bool
