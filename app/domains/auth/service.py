@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.domains.auth.account_parser import AccountPageData, parse_account_page
+from app.domains.auth.account_parser import AccountPageData, parse_account_page, parse_charges_page
 from app.domains.auth.crypto import CredsEncryptionUnavailable, decrypt_password, encrypt_password
 from app.domains.auth.models import User
 
@@ -133,6 +133,27 @@ async def fetch_and_parse_account_page(cgisessid: str, roll_no: str) -> AccountP
             roll_no, exc_info=True,
         )
         return AccountPageData(name=roll_no)
+
+
+async def fetch_and_parse_charges_page(cgisessid: str, roll_no: str) -> AccountPageData:
+    """
+    GET the authenticated Koha OPAC charges page (opac-account.pl)
+    and parse fine/charge data.
+    Returns AccountPageData with outstanding_fine and fine_history populated.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.get(
+                _KOHA_CHARGES_URL,
+                cookies={"CGISESSID": cgisessid},
+            )
+        return parse_charges_page(response.text, roll_no)
+    except Exception:
+        logger.warning(
+            "Could not fetch or parse charges page from Koha for roll_no=%s",
+            roll_no, exc_info=True,
+        )
+        return AccountPageData(name=roll_no, outstanding_fine=0.0, fine_history=[])
 
 
 # ---------------------------------------------------------------------------
@@ -309,6 +330,8 @@ async def refresh(refresh_token_str: str, db: AsyncSession) -> tuple[str, str]:
 
     return new_access_token, new_refresh_token
 
+
+_KOHA_CHARGES_URL = f"{settings.KOHA_OPAC_URL}/cgi-bin/koha/opac-account.pl"
 
 _KOHA_LOGOUT_URL = f"{settings.KOHA_OPAC_URL}/cgi-bin/koha/opac-main.pl?logout.x=1"
 

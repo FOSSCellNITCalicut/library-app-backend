@@ -34,6 +34,22 @@ class AccountPageData:
     fine_history: list[FineHistoryItem] = field(default_factory=list)
 
 
+def parse_charges_page(html: str, roll_no: str) -> AccountPageData:
+    """
+    Parse the Koha OPAC charges page (opac-account.pl).
+    Returns AccountPageData with outstanding_fine and fine_history populated.
+    Other fields (name, email, checkouts) are left at defaults.
+    """
+    soup = BeautifulSoup(html, "lxml")
+    outstanding_fine = _parse_outstanding_fine(soup, roll_no)
+    fine_history = _parse_fine_history(soup, roll_no)
+    return AccountPageData(
+        name=roll_no,
+        outstanding_fine=outstanding_fine,
+        fine_history=fine_history,
+    )
+
+
 def parse_account_page(html: str, roll_no: str) -> AccountPageData:
     """
     Parse the authenticated Koha OPAC account page (opac-user.pl).
@@ -231,7 +247,11 @@ def _parse_outstanding_fine(soup: BeautifulSoup, roll_no: str) -> float:
 
     fines_table = soup.find("table", id="fines-table")
     if fines_table is None:
+        fines_table = soup.find("table", id="account-table")
+    if fines_table is None:
         fines_table = soup.find("table", class_="fines_table")
+    if fines_table is None:
+        fines_table = soup.find("table", class_="account-table")
     if fines_table:
         tbody = fines_table.find("tbody")
         rows = tbody.find_all("tr") if tbody else fines_table.find_all("tr")
@@ -258,7 +278,11 @@ def _parse_fine_history(soup: BeautifulSoup, roll_no: str) -> list[FineHistoryIt
 
     fines_table = soup.find("table", id="fines-table")
     if fines_table is None:
+        fines_table = soup.find("table", id="account-table")
+    if fines_table is None:
         fines_table = soup.find("table", class_="fines_table")
+    if fines_table is None:
+        fines_table = soup.find("table", class_="account-table")
     if fines_table is None:
         fines_table = soup.find("table", {"id": re.compile(r"fine|charge", re.I)})
 

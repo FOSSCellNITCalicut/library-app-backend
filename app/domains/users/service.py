@@ -5,6 +5,7 @@ from app.domains.auth.models import User
 from app.domains.auth.service import (
     call_with_koha_retry,
     fetch_and_parse_account_page,
+    fetch_and_parse_charges_page,
 )
 from app.domains.users.schemas import (
     BookStatusResponse,
@@ -44,7 +45,7 @@ async def get_user_profile(roll_no: str, db: AsyncSession) -> UserMeResponse:
 
 async def get_fines(roll_no: str, db: AsyncSession) -> FinesResponse:
     async def _fetch(cgisessid: str) -> FinesResponse:
-        account = await fetch_and_parse_account_page(cgisessid, roll_no)
+        account = await fetch_and_parse_charges_page(cgisessid, roll_no)
         return FinesResponse(outstanding_fine=account.outstanding_fine)
 
     return await call_with_koha_retry(roll_no, db, _fetch)
@@ -52,7 +53,7 @@ async def get_fines(roll_no: str, db: AsyncSession) -> FinesResponse:
 
 async def get_fines_history(roll_no: str, db: AsyncSession) -> FineHistoryResponse:
     async def _fetch(cgisessid: str) -> FineHistoryResponse:
-        account = await fetch_and_parse_account_page(cgisessid, roll_no)
+        account = await fetch_and_parse_charges_page(cgisessid, roll_no)
         return FineHistoryResponse(
             items=[
                 FineHistoryItem(

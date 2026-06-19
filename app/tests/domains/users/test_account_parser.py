@@ -1,4 +1,4 @@
-from app.domains.auth.account_parser import parse_account_page
+from app.domains.auth.account_parser import parse_account_page, parse_charges_page
 
 
 def _make_koha_account_html(
@@ -230,3 +230,74 @@ class TestParseAccountPage:
 </body></html>"""
         result = parse_account_page(html, "B240119CS")
         assert result.checked_out_books[0].title == "My Book"
+
+
+def _make_koha_charges_html(
+    outstanding_fine=150.0,
+    fine_history=None,
+):
+    fine_history = fine_history or []
+    fine_rows = ""
+    for item in fine_history:
+        fine_rows += f"""
+          <tr>
+            <td>Late return fine</td>
+            <td>{item['date']}</td>
+            <td>Rs. {item['amount']:.2f}</td>
+            <td>{item['status']}</td>
+          </tr>"""
+
+    return f"""<!DOCTYPE html>
+<html>
+<head><title>Your Charges</title></head>
+<body>
+  <div id="opac-account">
+    <span id="fines-summary">You owe Rs. {outstanding_fine:.0f}.00 in fines.</span>
+
+    <table id="account-table">
+      <thead>
+        <tr>
+          <th>Description</th>
+          <th>Date</th>
+          <th>Amount</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {fine_rows}
+      </tbody>
+    </table>
+  </div>
+</body>
+</html>"""
+
+
+class TestParseChargesPage:
+    def test_charges_with_outstanding_and_history(self):
+        html = _make_koha_charges_html(
+            outstanding_fine=150.0,
+            fine_history=[
+                {"amount": 50.0, "date": "10/01/2026", "status": "Paid"},
+                {"amount": 100.0, "date": "01/05/2026", "status": "Unpaid"},
+            ],
+        )
+        result = parse_charges_page(html, "B240119CS")
+
+        assert result.outstanding_fine == 150.0
+        assert len(result.fine_history) == 2
+        assert result.fine_history[0].amount == 50.0
+        assert result.fine_history[0].status == "Paid"
+        assert result.fine_history[1].amount == 100.0
+        assert result.fine_history[1].status == "Unpaid"
+
+    def test_charges_no_fines(self):
+        html = _make_koha_charges_html(outstanding_fine=0.0, fine_history=[])
+        result = parse_charges_page(html, "B240119CS")
+        assert result.outstanding_fine == 0.0
+        assert result.fine_history == []
+
+    def test_charges_outstanding_zero_when_missing(self):
+        html = """<html><body><div>No charges here</div></body></html>"""
+        result = parse_charges_page(html, "B240999CS")
+        assert result.outstanding_fine == 0.0
+        assert result.fine_history == []
