@@ -210,9 +210,9 @@ class TestParseAccountPage:
         assert result.checked_out_books[0].title == "Book Title"
 
     def test_name_from_userlabel_with_welcome_prefix(self):
-        html = """<html><body><span class="userlabel">Welcome,       SARANG . T</span></body></html>"""
-        result = parse_account_page(html, "B251194EC")
-        assert result.name == "SARANG . T"
+        html = """<html><body><span class="userlabel">Welcome,       Test User</span></body></html>"""
+        result = parse_account_page(html, "B240000CS")
+        assert result.name == "Test User"
 
     def test_strips_title_slash_with_spaces(self):
         html = """<!DOCTYPE html>
