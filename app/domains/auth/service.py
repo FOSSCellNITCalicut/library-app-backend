@@ -7,12 +7,12 @@ from typing import Awaitable, Callable, TypeVar
 import bcrypt
 import httpx
 import jwt
-from bs4 import BeautifulSoup
 from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.domains.auth.account_parser import AccountPageData, parse_account_page
 from app.domains.auth.crypto import CredsEncryptionUnavailable, decrypt_password, encrypt_password
 from app.domains.auth.models import User
 
@@ -41,7 +41,7 @@ class KohaSessionExpired(Exception):
     """
 
 
-async def _koha_login(roll_no: str, password: str) -> tuple[str, str]:
+async def _koha_login(roll_no: str, password: str) -> tuple[str, AccountPageData]:
     """
     POST credentials to Koha's OPAC login form.
 
@@ -53,7 +53,7 @@ async def _koha_login(roll_no: str, password: str) -> tuple[str, str]:
     connection errors, timeouts, and 5xx responses. A 200 (wrong credentials)
     is a definitive answer and is never retried.
 
-    Returns (cgisessid, display_name).
+    Returns (cgisessid, AccountPageData).
     Raises KohaAuthError on invalid credentials.
     Raises HTTPException(502) if Koha is unreachable after all retries.
     """
@@ -108,17 +108,17 @@ async def _koha_login(roll_no: str, password: str) -> tuple[str, str]:
             )
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Koha session error")
 
-        name = await _fetch_koha_display_name(cgisessid, roll_no)
-        return cgisessid, name
+        account_data = await fetch_and_parse_account_page(cgisessid, roll_no)
+        return cgisessid, account_data
 
     # Unreachable in practice -- the loop always returns or raises -- but keeps type checkers happy.
     raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Koha is unreachable") from last_error
 
 
-async def _fetch_koha_display_name(cgisessid: str, fallback: str) -> str:
+async def fetch_and_parse_account_page(cgisessid: str, roll_no: str) -> AccountPageData:
     """
-    GET the Koha OPAC user page and scrape the display name from the HTML.
-    Falls back to the roll number if the name cannot be found.
+    GET the authenticated Koha OPAC user page and parse all user data.
+    Returns AccountPageData with name, email, checkouts, fines, etc.
     """
     try:
         async with httpx.AsyncClient(timeout=10) as client:
@@ -126,22 +126,13 @@ async def _fetch_koha_display_name(cgisessid: str, fallback: str) -> str:
                 _KOHA_LOGIN_URL,
                 cookies={"CGISESSID": cgisessid},
             )
-        soup = BeautifulSoup(response.text, "lxml")
-
-        # Koha OPAC stores the logged-in name in one of these elements.
-        for selector in [
-            {"id": "logged-in-info-full"},
-            {"class": "loggedinusername"},
-            {"id": "logged-in-name"},
-        ]:
-            tag = soup.find(attrs=selector)
-            if tag and tag.get_text(strip=True):
-                return tag.get_text(strip=True)
-
+        return parse_account_page(response.text, roll_no)
     except Exception:
-        logger.warning("Could not fetch display name from Koha for %s", fallback, exc_info=True)
-
-    return fallback
+        logger.warning(
+            "Could not fetch or parse account page from Koha for roll_no=%s",
+            roll_no, exc_info=True,
+        )
+        return AccountPageData(name=roll_no)
 
 
 # ---------------------------------------------------------------------------
@@ -230,9 +221,12 @@ async def login(roll_no: str, password: str, remember_me: bool, db: AsyncSession
     Returns (access_token, refresh_token, display_name).
     """
     try:
-        cgisessid, name = await _koha_login(roll_no, password)
+        cgisessid, account = await _koha_login(roll_no, password)
     except KohaAuthError:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid roll number or password")
+
+    name = account.name
+    email = account.email
 
     jti = secrets.token_urlsafe(32)
     access_token = create_access_token(roll_no, name)
@@ -257,6 +251,7 @@ async def login(roll_no: str, password: str, remember_me: bool, db: AsyncSession
         roll_no=roll_no,
         cgisessid=cgisessid,
         name=name,
+        email=email,
         refresh_token_hash=refresh_hash,
         creds_enc=creds_enc,
     )
@@ -315,11 +310,27 @@ async def refresh(refresh_token_str: str, db: AsyncSession) -> tuple[str, str]:
     return new_access_token, new_refresh_token
 
 
+_KOHA_LOGOUT_URL = f"{settings.KOHA_OPAC_URL}/cgi-bin/koha/opac-main.pl?logout.x=1"
+
+
+async def _koha_logout(cgisessid: str) -> None:
+    """Invalidate the CGISESSID on Koha's side."""
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            await client.get(
+                _KOHA_LOGOUT_URL,
+                cookies={"CGISESSID": cgisessid},
+            )
+    except Exception:
+        logger.warning("Failed to call Koha logout endpoint", exc_info=True)
+
+
 async def logout(roll_no: str, db: AsyncSession) -> None:
     """Delete the user's session, invalidating all tokens immediately."""
     result = await db.execute(select(User).where(User.roll_no == roll_no))
     user = result.scalar_one_or_none()
     if user:
+        await _koha_logout(user.cgisessid)
         await db.delete(user)
         await db.commit()
 
@@ -336,7 +347,7 @@ async def logout(roll_no: str, db: AsyncSession) -> None:
 async def reauthenticate(user: User, db: AsyncSession) -> str:
     """
     Re-login to Koha using the user's stored encrypted credentials, used when
-    their CGISESSID has gone stale. Updates the stored cgisessid + name.
+    their CGISESSID has gone stale. Updates the stored cgisessid + name + email.
 
     Raises HTTPException(401) if the user never enabled remember-me (no
     creds_enc) -- the caller should surface this as "please log in again".
@@ -347,7 +358,7 @@ async def reauthenticate(user: User, db: AsyncSession) -> str:
     password = decrypt_password(user.creds_enc)
 
     try:
-        cgisessid, name = await _koha_login(user.roll_no, password)
+        cgisessid, account = await _koha_login(user.roll_no, password)
     except KohaAuthError as exc:
         # Stored credentials no longer work (e.g. password changed on Koha's side).
         # Drop them so we don't keep retrying a doomed re-auth.
@@ -356,7 +367,8 @@ async def reauthenticate(user: User, db: AsyncSession) -> str:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session expired, please log in again") from exc
 
     user.cgisessid = cgisessid
-    user.name = name
+    user.name = account.name
+    user.email = account.email
     await db.commit()
     return cgisessid
 

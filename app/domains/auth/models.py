@@ -14,6 +14,7 @@ class User(Base):
     # Koha OPAC session cookie -- used for backend-to-Koha requests, never sent to the client.
     cgisessid: Mapped[str] = mapped_column(Text, nullable=False)
     name: Mapped[str] = mapped_column(Text, nullable=False)
+    email: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # AES-GCM encrypted {roll_no, password} bytes. NULL when remember-me is not enabled.
     creds_enc: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
