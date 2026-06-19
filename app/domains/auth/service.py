@@ -96,8 +96,6 @@ async def _koha_login(roll_no: str, password: str) -> tuple[str, AccountPageData
                     _KOHA_LOGIN_URL,
                     cookies={"CGISESSID": cgisessid},
                 )
-            if "koha_login_context" in account_response.text:
-                raise KohaSessionExpired()
             account_data = parse_account_page(account_response.text, roll_no)
             return cgisessid, account_data
 
