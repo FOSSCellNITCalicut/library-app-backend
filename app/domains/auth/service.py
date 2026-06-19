@@ -1,10 +1,10 @@
 import asyncio
+import hashlib
 import logging
 import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Awaitable, Callable, TypeVar
 
-import bcrypt
 import httpx
 import jwt
 from fastapi import HTTPException, status
@@ -196,7 +196,7 @@ def create_refresh_token(roll_no: str, jti: str) -> str:
     """
     The `jti` (JWT ID) is a random token we generate, embed in the JWT, and hash
     for storage. On the next /auth/refresh call we extract `jti` from the decoded
-    claims and bcrypt.checkpw it against the stored hash.
+    claims and compare SHA-256 hashes.
 
     This means the thing we're verifying is: did this specific device produce the
     token we last issued? The JWT signature already protects the jti from tampering.
@@ -232,15 +232,15 @@ def decode_token(token: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# bcrypt helpers
+# Token hash helpers
 # ---------------------------------------------------------------------------
 
 def _hash_token(raw_token: str) -> str:
-    return bcrypt.hashpw(raw_token.encode(), bcrypt.gensalt()).decode()
+    return hashlib.sha256(raw_token.encode()).hexdigest()
 
 
 def _verify_token_hash(raw_token: str, stored_hash: str) -> bool:
-    return bcrypt.checkpw(raw_token.encode(), stored_hash.encode())
+    return hashlib.sha256(raw_token.encode()).hexdigest() == stored_hash
 
 
 # ---------------------------------------------------------------------------
