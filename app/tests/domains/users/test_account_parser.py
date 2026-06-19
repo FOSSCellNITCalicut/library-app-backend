@@ -37,8 +37,8 @@ def _make_koha_account_html(
 <html>
 <head><title>Your Account</title></head>
 <body>
-  <div id="logged-in-info-full">{name}</div>
-  <span class="loggedinusername">{name}</span>
+  <span class="userlabel">Welcome,       {name}</span>
+  <span class="loggedinusername">Your account</span>
 
   <div id="user-email">{email}</div>
 
@@ -208,6 +208,11 @@ class TestParseAccountPage:
         )
         result = parse_account_page(html, "B240119CS")
         assert result.checked_out_books[0].title == "Book Title"
+
+    def test_name_from_userlabel_with_welcome_prefix(self):
+        html = """<html><body><span class="userlabel">Welcome,       SARANG . T</span></body></html>"""
+        result = parse_account_page(html, "B251194EC")
+        assert result.name == "SARANG . T"
 
     def test_strips_title_slash_with_spaces(self):
         html = """<!DOCTYPE html>

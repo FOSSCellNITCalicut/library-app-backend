@@ -61,6 +61,13 @@ def parse_account_page(html: str, roll_no: str) -> AccountPageData:
 
 
 def _parse_name(soup: BeautifulSoup, roll_no: str) -> str:
+    userlabel = soup.find(class_="userlabel")
+    if userlabel:
+        text = userlabel.get_text(strip=True)
+        text = re.sub(r'^Welcome\s*,?\s*', '', text, flags=re.I).strip()
+        if text:
+            return text
+
     for selector in [
         {"id": "logged-in-info-full"},
         {"class": "loggedinusername"},
