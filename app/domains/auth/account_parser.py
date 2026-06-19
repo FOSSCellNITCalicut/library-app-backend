@@ -148,17 +148,26 @@ def _parse_loan_summary(soup: BeautifulSoup, roll_no: str) -> tuple[int, int]:
                 loan_limit = int(numbers[1])
             return loan_count, loan_limit
 
-    checkout_table = soup.find("table", id="checkoutst")
-    if checkout_table:
-        rows = checkout_table.find("tbody")
-        if not rows:
-            rows = checkout_table
-        loan_count = len(rows.find_all("tr", recursive=False)) if rows else 0
+    checkout_tab = soup.find(string=re.compile(r'Checked\s*out\s*\((\d+)\)', re.I))
+    if checkout_tab:
+        match = re.search(r'Checked\s*out\s*\((\d+)\)', checkout_tab, re.I)
+        if match:
+            loan_count = int(match.group(1))
 
-    logger.warning(
-        "Expected profile element 'loan summary' missing for roll_no=%s -- inferred %d from table rows",
-        roll_no, loan_count,
-    )
+    if not checkout_tab:
+        checkout_table = soup.find("table", id="checkoutst")
+        if checkout_table:
+            tbody = checkout_table.find("tbody")
+            rows = tbody.find_all("tr", recursive=False) if tbody else checkout_table.find_all("tr", recursive=False)
+            inferred = len(rows) if rows else 0
+            if loan_count == 0:
+                loan_count = inferred
+
+    if loan_count == 0 and loan_limit == 0:
+        logger.warning(
+            "Expected profile element 'loan summary' missing for roll_no=%s",
+            roll_no,
+        )
     return loan_count, loan_limit
 
 

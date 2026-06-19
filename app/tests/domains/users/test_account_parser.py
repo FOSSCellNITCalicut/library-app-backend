@@ -180,6 +180,11 @@ class TestParseAccountPage:
         assert result.loan_count == 0
         assert result.loan_limit == 0
 
+    def test_loan_count_from_tab_title(self):
+        html = """<html><body><span class="userlabel">Test User</span><a href="#checkoutst">Checked out (2)</a></body></html>"""
+        result = parse_account_page(html, "B240119CS")
+        assert result.loan_count == 2
+
     def test_outstanding_fine_zero_when_missing(self):
         html = """<html><body><div id="logged-in-info-full">Test User</div></body></html>"""
         result = parse_account_page(html, "B240999CS")
