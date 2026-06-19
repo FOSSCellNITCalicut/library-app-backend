@@ -236,6 +236,41 @@ def _parse_checked_out_books(soup: BeautifulSoup, roll_no: str) -> list[CheckedO
     return books
 
 
+def _find_fines_table(soup: BeautifulSoup) -> BeautifulSoup | None:
+    for selector in [
+        {"id": "fines-table"},
+        {"id": "account-table"},
+        {"class": "fines_table"},
+        {"class": "account-table"},
+        {"id": re.compile(r"fine|charge", re.I)},
+    ]:
+        table = soup.find("table", attrs=selector)
+        if table:
+            return table
+    return None
+
+
+def _build_column_index(table: BeautifulSoup) -> dict[str, int]:
+    """
+    Read <thead><tr><th> headers and build {normalized_header: index} map.
+    Returns empty dict if no <thead> found.
+    """
+    thead = table.find("thead")
+    if thead is None:
+        return {}
+    header_cells = thead.find_all("th")
+    col_map: dict[str, int] = {}
+    for idx, th in enumerate(header_cells):
+        text = th.get_text(strip=True).lower()
+        if "date" in text:
+            col_map["date"] = idx
+        elif "amount" in text or "fine" in text or "charge" in text or "total" in text:
+            col_map["amount"] = idx
+        elif "status" in text or "state" in text or "paid" in text:
+            col_map["status"] = idx
+    return col_map
+
+
 def _parse_outstanding_fine(soup: BeautifulSoup, roll_no: str) -> float:
     fine_selectors = [
         {"id": "fines-summary"},
@@ -254,21 +289,17 @@ def _parse_outstanding_fine(soup: BeautifulSoup, roll_no: str) -> float:
                 except ValueError:
                     pass
 
-    fines_table = soup.find("table", id="fines-table")
-    if fines_table is None:
-        fines_table = soup.find("table", id="account-table")
-    if fines_table is None:
-        fines_table = soup.find("table", class_="fines_table")
-    if fines_table is None:
-        fines_table = soup.find("table", class_="account-table")
+    fines_table = _find_fines_table(soup)
     if fines_table:
+        col_map = _build_column_index(fines_table)
+        amount_idx = col_map.get("amount", 2)
         tbody = fines_table.find("tbody")
         rows = tbody.find_all("tr") if tbody else fines_table.find_all("tr")
         total = 0.0
         for row in rows:
             cells = row.find_all("td")
-            if len(cells) >= 3:
-                amount_text = cells[2].get_text(strip=True) if len(cells) > 2 else ""
+            if amount_idx < len(cells):
+                amount_text = cells[amount_idx].get_text(strip=True)
                 amounts = re.findall(r'\d[\d,.]*', amount_text)
                 if amounts:
                     try:
@@ -285,39 +316,31 @@ def _parse_outstanding_fine(soup: BeautifulSoup, roll_no: str) -> float:
 def _parse_fine_history(soup: BeautifulSoup, roll_no: str) -> list[FineHistoryItem]:
     items: list[FineHistoryItem] = []
 
-    fines_table = soup.find("table", id="fines-table")
-    if fines_table is None:
-        fines_table = soup.find("table", id="account-table")
-    if fines_table is None:
-        fines_table = soup.find("table", class_="fines_table")
-    if fines_table is None:
-        fines_table = soup.find("table", class_="account-table")
-    if fines_table is None:
-        fines_table = soup.find("table", {"id": re.compile(r"fine|charge", re.I)})
-
+    fines_table = _find_fines_table(soup)
     if fines_table is None:
         logger.warning("Expected profile element 'fine history table' missing for roll_no=%s", roll_no)
         return items
+
+    col_map = _build_column_index(fines_table)
+    amount_idx = col_map.get("amount", 2)
+    date_idx = col_map.get("date", 1)
+    status_idx = col_map.get("status", 3)
 
     tbody = fines_table.find("tbody")
     rows = tbody.find_all("tr") if tbody else fines_table.find_all("tr")
 
     for row in rows:
         cells = row.find_all("td")
-        if len(cells) < 3:
+        if len(cells) < max(amount_idx, date_idx, status_idx) + 1:
             continue
 
-        amount_text = cells[2].get_text(strip=True) if len(cells) > 2 else ""
+        amount_text = cells[amount_idx].get_text(strip=True)
         amounts = re.findall(r'\d[\d,.]*', amount_text)
         amount = float(amounts[0].replace(",", "")) if amounts else 0.0
 
-        date_text = cells[1].get_text(strip=True) if len(cells) > 1 else ""
+        date_text = cells[date_idx].get_text(strip=True)
 
-        status_text = ""
-        if len(cells) >= 5:
-            status_text = cells[4].get_text(strip=True)
-        elif len(cells) >= 4:
-            status_text = cells[3].get_text(strip=True)
+        status_text = cells[status_idx].get_text(strip=True)
 
         status = "Unpaid"
         if status_text:
