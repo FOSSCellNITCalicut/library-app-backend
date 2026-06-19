@@ -282,6 +282,15 @@ def _parse_outstanding_fine(soup: BeautifulSoup, roll_no: str) -> float:
         tag = soup.find(attrs=selector)
         if tag:
             text = tag.get_text(strip=True)
+            match = re.search(
+                r'(?:owe|due|outstanding|total|amount)\s*:?\s*(?:rs\.?\s*)?([\d,]+\.?\d*)',
+                text, re.I,
+            )
+            if match:
+                try:
+                    return float(match.group(1).replace(",", ""))
+                except ValueError:
+                    pass
             amounts = re.findall(r'\d[\d,.]*', text)
             if amounts:
                 try:
