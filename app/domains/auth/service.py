@@ -72,7 +72,40 @@ async def _koha_login(roll_no: str, password: str) -> tuple[str, AccountPageData
                         "koha_login_context": "opac",
                     },
                 )
-        except (httpx.ConnectError, httpx.TimeoutException) as exc:
+
+            if response.status_code == 200:
+                raise KohaAuthError("Invalid credentials")
+
+            if response.status_code >= 500:
+                raise httpx.HTTPStatusError(
+                    f"Koha server error: {response.status_code}",
+                    request=response.request,
+                    response=response,
+                )
+
+            cgisessid = response.cookies.get("CGISESSID")
+            if not cgisessid:
+                logger.error(
+                    "Koha login for %s returned %s but no CGISESSID cookie",
+                    roll_no, response.status_code,
+                )
+                raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Koha session error")
+
+            async with httpx.AsyncClient(timeout=10) as client:
+                account_response = await client.get(
+                    _KOHA_LOGIN_URL,
+                    cookies={"CGISESSID": cgisessid},
+                )
+            if "koha_login_context" in account_response.text:
+                raise KohaSessionExpired()
+            account_data = parse_account_page(account_response.text, roll_no)
+            return cgisessid, account_data
+
+        except KohaAuthError:
+            raise
+        except HTTPException:
+            raise  # CGISESSID missing is not transient
+        except (httpx.ConnectError, httpx.TimeoutException, httpx.HTTPStatusError) as exc:
             last_error = exc
             logger.warning(
                 "Koha login attempt %d/%d for %s failed: %s",
@@ -83,35 +116,6 @@ async def _koha_login(roll_no: str, password: str) -> tuple[str, AccountPageData
                 continue
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Koha is unreachable") from exc
 
-        if response.status_code == 200:
-            # Koha returned the login page -- credentials are wrong. Don't retry.
-            raise KohaAuthError("Invalid credentials")
-
-        if response.status_code >= 500:
-            last_error = httpx.HTTPStatusError("Koha server error", request=response.request, response=response)
-            logger.warning(
-                "Koha login attempt %d/%d for %s got %s",
-                attempt, settings.MAX_KOHA_LOGIN_RETRIES, roll_no, response.status_code,
-            )
-            if attempt < settings.MAX_KOHA_LOGIN_RETRIES:
-                await asyncio.sleep(2 ** (attempt - 1))
-                continue
-            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Koha server error") from last_error
-
-        cgisessid = response.cookies.get("CGISESSID")
-        if not cgisessid:
-            # Redirect happened but no session cookie -- unexpected Koha state, not transient.
-            logger.error(
-                "Koha login for %s returned %s but no CGISESSID cookie",
-                roll_no,
-                response.status_code,
-            )
-            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Koha session error")
-
-        account_data = await fetch_and_parse_account_page(cgisessid, roll_no)
-        return cgisessid, account_data
-
-    # Unreachable in practice -- the loop always returns or raises -- but keeps type checkers happy.
     raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Koha is unreachable") from last_error
 
 
