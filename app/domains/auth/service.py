@@ -132,7 +132,7 @@ async def fetch_and_parse_account_page(cgisessid: str, roll_no: str) -> AccountP
                 _KOHA_LOGIN_URL,
                 cookies={"CGISESSID": cgisessid},
             )
-        if "koha_login_context" in response.text:
+        if 'id="userid"' in response.text:
             raise KohaSessionExpired()
         return parse_account_page(response.text, roll_no)
     except KohaSessionExpired:
@@ -161,7 +161,7 @@ async def fetch_and_parse_charges_page(cgisessid: str, roll_no: str) -> AccountP
                 _KOHA_CHARGES_URL,
                 cookies={"CGISESSID": cgisessid},
             )
-        if "koha_login_context" in response.text:
+        if 'id="userid"' in response.text:
             raise KohaSessionExpired()
         return parse_charges_page(response.text, roll_no)
     except KohaSessionExpired:
