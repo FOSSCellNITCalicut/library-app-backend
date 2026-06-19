@@ -1,7 +1,5 @@
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domains.auth.models import User
 from app.domains.auth.service import (
     call_with_koha_retry,
     fetch_and_parse_account_page,
