@@ -188,7 +188,7 @@ def _parse_checked_out_books(soup: BeautifulSoup, roll_no: str) -> list[CheckedO
     rows = tbody.find_all("tr") if tbody else checkout_table.find_all("tr")
 
     for row in rows:
-        title_link = row.find("a", href=lambda h: h and "biblionumber=" in h) if row.find("a") else None
+        title_link = row.find("a", href=lambda h: h and "biblionumber=" in h)
         if title_link is None:
             title_link = row.find("a")
         if title_link is None:
