@@ -174,11 +174,20 @@ class TestParseAccountPage:
         result = parse_account_page(html, "B240999CS")
         assert result.email is None
 
-    def test_loan_summary_zero_when_missing(self):
+    def test_loan_count_zero_and_limit_from_policy_table_when_missing(self):
+        # Koha's account page doesn't expose loan_limit anywhere -- it always
+        # falls back to the published policy table, keyed by roll number prefix.
         html = """<html><body><div id="logged-in-info-full">Test User</div></body></html>"""
         result = parse_account_page(html, "B240999CS")
         assert result.loan_count == 0
-        assert result.loan_limit == 0
+        assert result.loan_limit == 8  # "B" prefix -> UG Students (GEN)
+
+    def test_loan_limit_from_policy_table_by_roll_prefix(self):
+        html = """<html><body><div id="logged-in-info-full">Test User</div></body></html>"""
+        assert parse_account_page(html, "B240999CS").loan_limit == 8  # UG
+        assert parse_account_page(html, "M240999CS").loan_limit == 10  # PG
+        assert parse_account_page(html, "P240999CS").loan_limit == 10  # PhD
+        assert parse_account_page(html, "X240999CS").loan_limit == 8  # unrecognized -> default
 
     def test_loan_count_from_tab_title(self):
         html = """<html><body><span class="userlabel">Test User</span><a href="#checkoutst">Checked out (2)</a></body></html>"""

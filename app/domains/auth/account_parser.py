@@ -128,6 +128,25 @@ def _parse_email(soup: BeautifulSoup, roll_no: str) -> Optional[str]:
     return None
 
 
+# NITC Central Library borrowing policy (General Books only -- Special
+# Collection has separate, shorter quotas this app doesn't model yet).
+# Not exposed anywhere in Koha's OPAC HTML, so it can't be scraped -- this is
+# the published policy table, keyed by the roll number's category prefix.
+# Source: NITC library "Borrowing Limit" policy page (confirmed by team,
+# 2026-06). Update here if the library changes circulation policy.
+_LOAN_LIMIT_BY_ROLL_PREFIX = {
+    "B": 8,   # UG Students (GEN)
+    "M": 10,  # PG Students (GEN)
+    "P": 10,  # PhD (Full Time/Part Time)
+}
+_DEFAULT_LOAN_LIMIT = 8  # fallback for roll numbers that don't match B/M/P (e.g. staff logins)
+
+
+def _loan_limit_for_roll_no(roll_no: str) -> int:
+    prefix = roll_no[:1].upper() if roll_no else ""
+    return _LOAN_LIMIT_BY_ROLL_PREFIX.get(prefix, _DEFAULT_LOAN_LIMIT)
+
+
 def _parse_loan_summary(soup: BeautifulSoup, roll_no: str) -> tuple[int, int]:
     loan_count = 0
     loan_limit = 0
@@ -146,7 +165,7 @@ def _parse_loan_summary(soup: BeautifulSoup, roll_no: str) -> tuple[int, int]:
                 loan_count = int(numbers[0])
             if len(numbers) >= 2:
                 loan_limit = int(numbers[1])
-            return loan_count, loan_limit
+            return loan_count, loan_limit or _loan_limit_for_roll_no(roll_no)
 
     checkout_tab = soup.find(string=re.compile(r'Checked\s*out\s*\((\d+)\)', re.I))
     if checkout_tab:
@@ -163,12 +182,12 @@ def _parse_loan_summary(soup: BeautifulSoup, roll_no: str) -> tuple[int, int]:
             if loan_count == 0:
                 loan_count = inferred
 
-    if loan_count == 0 and loan_limit == 0:
+    if loan_count == 0:
         logger.warning(
             "Expected profile element 'loan summary' missing for roll_no=%s",
             roll_no,
         )
-    return loan_count, loan_limit
+    return loan_count, loan_limit or _loan_limit_for_roll_no(roll_no)
 
 
 def _parse_checked_out_books(soup: BeautifulSoup, roll_no: str) -> list[CheckedOutBook]:
