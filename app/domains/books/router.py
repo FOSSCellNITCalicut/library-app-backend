@@ -5,7 +5,8 @@ from app.db.database import get_db
 from app.domains.books.service import (
     BookService,                 
     BookNotFoundError,           
-    ServiceValidationError,   
+    ServiceValidationError, 
+    BiblioNotFoundError,
 )
 #need repository file done to create service
 from app.domains.books.repository import BooksRepository
@@ -194,7 +195,7 @@ async def check_availability(
     try:
         return await service.check_availability(biblio_id=biblio_id)
 
-    except BookNotFoundError as e:
+    except BiblioNotFoundError as e:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(e),
