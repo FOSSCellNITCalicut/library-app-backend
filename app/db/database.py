@@ -1,10 +1,17 @@
 import logging
 
 from app.core.config import settings
-
+from sqlalchemy.engine import make_url
 
 logger = logging.getLogger(__name__)
-logger.info("FINAL DATABASE URL = %s", settings.DATABASE_URL)
+
+url = make_url(settings.DATABASE_URL)
+
+logger.warning(
+    "Database configured (host=%s, db=%s)",
+    url.host,
+    url.database,
+)
 
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
