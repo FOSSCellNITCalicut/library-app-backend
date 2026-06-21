@@ -177,3 +177,31 @@ async def get_book(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
+        
+@router.get(
+    "/{biblio_id}/availability",
+    status_code=status.HTTP_200_OK,
+    responses={
+        200: {"description": "Availability fetched successfully"},
+        404: {"description": "Book not found"},
+        500: {"description": "Internal server error"},
+    },
+)
+async def check_availability(
+    service: BookService = Depends(get_book_service),
+    biblio_id: int = Path(..., description="ID of the book"),
+):
+    try:
+        return await service.check_availability(biblio_id=biblio_id)
+
+    except BookNotFoundError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e),
+        )
+
+    except ServiceValidationError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
