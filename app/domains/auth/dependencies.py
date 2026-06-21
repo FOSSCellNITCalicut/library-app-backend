@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import Depends
+from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.domains.auth.service import decode_token
@@ -22,6 +22,5 @@ def get_current_user(credentials: Annotated[HTTPAuthorizationCredentials, Depend
     """
     claims = decode_token(credentials.credentials)
     if claims.get("type") != "access":
-        from fastapi import HTTPException, status
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not an access token")
     return claims
