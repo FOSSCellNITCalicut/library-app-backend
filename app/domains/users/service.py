@@ -4,7 +4,9 @@ from app.domains.auth.service import (
     call_with_koha_retry,
     fetch_and_parse_account_page,
     fetch_and_parse_charges_page,
+    fetch_and_parse_hold_form,
 )
+from app.domains.auth.service import place_hold as koha_place_hold
 from app.domains.users.schemas import (
     AccountActivityResponse,
     BookStatusResponse,
@@ -12,7 +14,10 @@ from app.domains.users.schemas import (
     FineHistoryResponse,
     FineHistoryItem,
     FinesResponse,
+    HoldFormResponse,
     LoanSummary,
+    PickupBranch,
+    PlaceHoldResponse,
     UserMeResponse,
 )
 
@@ -96,3 +101,28 @@ async def get_book_status(
         return BookStatusResponse(borrowed_by_current_user=borrowed)
 
     return await call_with_koha_retry(roll_no, db, _fetch)
+
+
+async def get_hold_form(roll_no: str, biblio_id: int, db: AsyncSession) -> HoldFormResponse:
+    async def _fetch(cgisessid: str) -> HoldFormResponse:
+        form = await fetch_and_parse_hold_form(cgisessid, roll_no, biblio_id)
+        return HoldFormResponse(
+            biblio_id=biblio_id,
+            holdable=form.holdable,
+            branches=[
+                PickupBranch(code=b.code, name=b.name, is_default=b.is_default)
+                for b in form.branches
+            ],
+        )
+
+    return await call_with_koha_retry(roll_no, db, _fetch)
+
+
+async def place_hold(
+    roll_no: str, biblio_id: int, branch_code: str, db: AsyncSession
+) -> PlaceHoldResponse:
+    async def _place(cgisessid: str) -> PlaceHoldResponse:
+        success, message = await koha_place_hold(cgisessid, roll_no, biblio_id, branch_code)
+        return PlaceHoldResponse(success=success, message=message)
+
+    return await call_with_koha_retry(roll_no, db, _place)

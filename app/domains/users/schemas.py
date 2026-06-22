@@ -41,3 +41,24 @@ class AccountActivityResponse(BaseModel):
 
 class BookStatusResponse(BaseModel):
     borrowed_by_current_user: bool
+
+
+class PickupBranch(BaseModel):
+    code: str
+    name: str
+    is_default: bool = False
+
+
+class HoldFormResponse(BaseModel):
+    biblio_id: int
+    holdable: bool
+    branches: list[PickupBranch]
+
+
+class PlaceHoldRequest(BaseModel):
+    branch_code: str
+
+
+class PlaceHoldResponse(BaseModel):
+    success: bool
+    message: str

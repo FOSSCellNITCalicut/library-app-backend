@@ -34,6 +34,36 @@ class AccountPageData:
     fine_history: list[FineHistoryItem] = field(default_factory=list)
 
 
+@dataclass
+class PickupBranch:
+    code: str
+    name: str
+    is_default: bool = False
+
+
+@dataclass
+class HoldFormData:
+    """
+    What's needed to submit a hold on opac-reserve.pl: the CSRF token Koha
+    embeds in the GET response (required on the POST, validated against the
+    session -- see Koha::Middleware::CSRF) and the pickup branches the patron
+    can choose from.
+
+    `holdable` is best-effort: True only when both a token and at least one
+    branch were found. Koha also renders a free-text reason when a hold can't
+    be placed (already held, too many holds, etc), but that text isn't parsed
+    here -- it isn't stable enough to match reliably without a known-good
+    sample of NITC's actual Koha templates. Treat `holdable=False` as "show a
+    generic 'try the OPAC website' message", not as a parsed reason.
+    """
+    csrf_token: Optional[str] = None
+    branches: list[PickupBranch] = field(default_factory=list)
+
+    @property
+    def holdable(self) -> bool:
+        return bool(self.csrf_token) and bool(self.branches)
+
+
 def parse_charges_page(html: str, roll_no: str) -> AccountPageData:
     """
     Parse the Koha OPAC charges page (opac-account.pl).
@@ -385,6 +415,53 @@ def _parse_fine_history(soup: BeautifulSoup, roll_no: str) -> list[FineHistoryIt
             date=date_text,
             status=status,
         ))
+
+    if not items:
+        logger.warning("Expected profile element 'fine history rows' missing for roll_no=%s", roll_no)
+
+    return items
+
+
+def parse_hold_form(html: str, roll_no: str, biblio_id: int) -> HoldFormData:
+    """
+    Parse Koha's opac-reserve.pl "place a hold" form (GET response).
+
+    Extracts the csrf_token hidden input (required on the confirm POST) and
+    the pickup-branch <select> options.
+    """
+    soup = BeautifulSoup(html, "lxml")
+
+    token_tag = soup.find("input", attrs={"name": "csrf_token"})
+    csrf_token = token_tag.get("value") if token_tag else None
+    if not csrf_token:
+        logger.warning(
+            "Expected hold form element 'csrf_token' missing for roll_no=%s biblio_id=%s",
+            roll_no, biblio_id,
+        )
+
+    branches: list[PickupBranch] = []
+    branch_select = soup.find("select", attrs={"name": "branch"})
+    if branch_select is None:
+        branch_select = soup.find("select", attrs={"id": re.compile(r"branch", re.I)})
+
+    if branch_select:
+        for option in branch_select.find_all("option"):
+            code = option.get("value", "").strip()
+            if not code:
+                continue
+            branches.append(PickupBranch(
+                code=code,
+                name=option.get_text(strip=True) or code,
+                is_default=option.has_attr("selected"),
+            ))
+
+    if not branches:
+        logger.warning(
+            "Expected hold form element 'pickup branch list' missing for roll_no=%s biblio_id=%s",
+            roll_no, biblio_id,
+        )
+
+    return HoldFormData(csrf_token=csrf_token, branches=branches)
 
     if not items:
         logger.warning("Expected profile element 'fine history rows' missing for roll_no=%s", roll_no)
