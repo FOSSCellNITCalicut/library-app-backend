@@ -41,6 +41,13 @@ class MarcParser:
     def _dedupe(self, values: list[str]) -> list[str]:
         """Remove duplicates while preserving order"""
         return list(dict.fromkeys(values))
+
+    def _reverse_name(self, name: str) -> str:
+        parts = [p.strip() for p in name.split(",")]
+        if len(parts) < 2:
+            return name
+        parts[0], parts[1] = parts[1], parts[0]
+        return " ".join(parts)
     
     def _first_subfield(self, field: dict | None, code: str) -> str | None:
         subfields = self._marc_subfields(field, code)
@@ -135,7 +142,14 @@ class MarcParser:
         # Author
         authors = []
 
-        for tag in ["100", "110", "111", "700", "710", "711"]:
+        for tag in ["100", "700"]:
+            for field in self._find_marc_fields(fields, tag):
+                authors.extend(
+                    self._reverse_name(n)
+                    for n in self._marc_subfields(field, "a")
+                )
+
+        for tag in ["110", "111", "710", "711"]:
             for field in self._find_marc_fields(fields, tag):
                 authors.extend(self._marc_subfields(field, "a"))
 
