@@ -9,9 +9,11 @@ from app.domains.users import service
 from app.domains.users.schemas import (
     AccountActivityResponse,
     BookStatusResponse,
+    CancelHoldResponse,
     FineHistoryResponse,
     FinesResponse,
     HoldFormResponse,
+    HoldsResponse,
     PlaceHoldRequest,
     PlaceHoldResponse,
     UserMeResponse,
@@ -51,6 +53,20 @@ async def user_book_status(
     return await service.get_book_status(
         roll_no=claims["sub"], biblio_id=biblio_id, db=db
     )
+
+
+@router.get("/holds", response_model=HoldsResponse)
+async def user_holds(claims: Annotated[dict, Depends(get_current_user)], db: DB):
+    return await service.get_holds(roll_no=claims["sub"], db=db)
+
+
+@router.post("/holds/{reserve_id}/cancel", response_model=CancelHoldResponse)
+async def user_cancel_hold(
+    reserve_id: str,
+    claims: Annotated[dict, Depends(get_current_user)],
+    db: DB,
+):
+    return await service.cancel_hold(roll_no=claims["sub"], reserve_id=reserve_id, db=db)
 
 
 @router.get("/holds/{biblio_id}/form", response_model=HoldFormResponse)

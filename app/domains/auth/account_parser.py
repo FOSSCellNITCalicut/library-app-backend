@@ -24,6 +24,23 @@ class FineHistoryItem:
 
 
 @dataclass
+class HoldItem:
+    """
+    One row from the patron's "Holds" tab on opac-user.pl, plus the csrf_token
+    scoped to that specific row's cancel form -- Koha generates a fresh token
+    per form (Koha.GenerateCSRF), not one shared per page, so it has to be
+    read out of the same <form> as the matching reserve_id rather than reused
+    across rows.
+    """
+    reserve_id: str
+    biblio_id: int
+    title: str = ""
+    branch: str = ""
+    status: str = ""
+    csrf_token: Optional[str] = None
+
+
+@dataclass
 class AccountPageData:
     name: str
     email: Optional[str] = None
@@ -32,6 +49,7 @@ class AccountPageData:
     checked_out_books: list[CheckedOutBook] = field(default_factory=list)
     outstanding_fine: float = 0.0
     fine_history: list[FineHistoryItem] = field(default_factory=list)
+    holds: list[HoldItem] = field(default_factory=list)
 
 
 @dataclass
@@ -94,6 +112,7 @@ def parse_account_page(html: str, roll_no: str) -> AccountPageData:
     checked_out_books = _parse_checked_out_books(soup, roll_no)
     outstanding_fine = _parse_outstanding_fine(soup, roll_no)
     fine_history = _parse_fine_history(soup, roll_no)
+    holds = _parse_holds(soup, roll_no)
 
     return AccountPageData(
         name=name,
@@ -103,6 +122,7 @@ def parse_account_page(html: str, roll_no: str) -> AccountPageData:
         checked_out_books=checked_out_books,
         outstanding_fine=outstanding_fine,
         fine_history=fine_history,
+        holds=holds,
     )
 
 
@@ -422,6 +442,70 @@ def _parse_fine_history(soup: BeautifulSoup, roll_no: str) -> list[FineHistoryIt
     return items
 
 
+def _parse_holds(soup: BeautifulSoup, roll_no: str) -> list[HoldItem]:
+    """
+    Parse the patron's current holds off opac-user.pl.
+
+    Anchored on each hold's cancel form (id="delete_hold_<reserve_id>")
+    rather than the surrounding table, since that form's hidden inputs
+    (reserve_id, biblionumber, csrf_token) are exactly what cancel_hold()
+    needs and are far more stable than guessing table column order. Title/
+    branch/status are read from the enclosing <tr> as best-effort display
+    text -- if that lookup fails the hold is still cancellable, just with
+    blank labels.
+    """
+    holds: list[HoldItem] = []
+
+    cancel_forms = soup.find_all("form", id=re.compile(r"^delete_hold_"))
+    for form in cancel_forms:
+        reserve_id_tag = form.find("input", attrs={"name": "reserve_id"})
+        reserve_id = reserve_id_tag.get("value", "").strip() if reserve_id_tag else ""
+        if not reserve_id:
+            continue
+
+        biblio_tag = form.find("input", attrs={"name": "biblionumber"})
+        biblio_id = 0
+        if biblio_tag:
+            try:
+                biblio_id = int(biblio_tag.get("value", "0"))
+            except ValueError:
+                pass
+
+        token_tag = form.find("input", attrs={"name": "csrf_token"})
+        csrf_token = token_tag.get("value") if token_tag else None
+
+        title = ""
+        branch = ""
+        status = ""
+        row = form.find_parent("tr")
+        if row:
+            title_cell = row.find(attrs={"class": re.compile(r"title", re.I)})
+            if title_cell:
+                title = title_cell.get_text(strip=True)
+            branch_cell = row.find(attrs={"class": re.compile(r"branch", re.I)})
+            if branch_cell:
+                branch = branch_cell.get_text(strip=True)
+            status_cell = row.find(attrs={"class": re.compile(r"status", re.I)})
+            if status_cell:
+                status = status_cell.get_text(strip=True)
+
+        holds.append(HoldItem(
+            reserve_id=reserve_id,
+            biblio_id=biblio_id,
+            title=title,
+            branch=branch,
+            status=status,
+            csrf_token=csrf_token,
+        ))
+
+    # Not a warning -- most patrons have zero active holds most of the time,
+    # unlike e.g. loan summary where "missing" usually means a parsing bug.
+    if not holds:
+        logger.info("No active holds found for roll_no=%s (or holds markup unrecognized)", roll_no)
+
+    return holds
+
+
 def parse_hold_form(html: str, roll_no: str, biblio_id: int) -> HoldFormData:
     """
     Parse Koha's opac-reserve.pl "place a hold" form (GET response).
@@ -462,8 +546,3 @@ def parse_hold_form(html: str, roll_no: str, biblio_id: int) -> HoldFormData:
         )
 
     return HoldFormData(csrf_token=csrf_token, branches=branches)
-
-    if not items:
-        logger.warning("Expected profile element 'fine history rows' missing for roll_no=%s", roll_no)
-
-    return items

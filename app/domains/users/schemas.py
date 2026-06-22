@@ -62,3 +62,20 @@ class PlaceHoldRequest(BaseModel):
 class PlaceHoldResponse(BaseModel):
     success: bool
     message: str
+
+
+class HoldItem(BaseModel):
+    reserve_id: str
+    biblio_id: int
+    title: str
+    branch: str
+    status: str
+
+
+class HoldsResponse(BaseModel):
+    items: list[HoldItem]
+
+
+class CancelHoldResponse(BaseModel):
+    success: bool
+    message: str

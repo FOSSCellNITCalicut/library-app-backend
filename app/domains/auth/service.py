@@ -258,6 +258,51 @@ async def place_hold(cgisessid: str, roll_no: str, biblio_id: int, branch_code: 
     return False, "Could not place hold. Try the OPAC website."
 
 
+_KOHA_MODREQUEST_URL = f"{settings.KOHA_OPAC_URL}/cgi-bin/koha/opac-modrequest.pl"
+
+
+async def cancel_hold(cgisessid: str, roll_no: str, reserve_id: str) -> tuple[bool, str]:
+    """
+    Cancel an existing hold via Koha's OPAC (opac-modrequest.pl, op=cud-cancel).
+
+    The cancel form's csrf_token is scoped to that specific hold row (see
+    HoldItem docstring), so this re-fetches the patron's current holds list
+    to get a fresh one rather than trusting anything the client cached.
+
+    Raises KohaSessionExpired -- same contract as fetch_and_parse_account_page.
+    Returns (success, message).
+    """
+    account = await fetch_and_parse_account_page(cgisessid, roll_no)
+    hold = next((h for h in account.holds if h.reserve_id == reserve_id), None)
+    if hold is None or not hold.csrf_token:
+        return False, "Could not find that hold. It may already be cancelled."
+
+    async with httpx.AsyncClient(timeout=10, follow_redirects=False) as client:
+        response = await client.post(
+            _KOHA_MODREQUEST_URL,
+            data={
+                "op": "cud-cancel",
+                "csrf_token": hold.csrf_token,
+                "biblionumber": str(hold.biblio_id),
+                "reserve_id": reserve_id,
+            },
+            cookies={"CGISESSID": cgisessid},
+        )
+
+    if response.status_code == 200 and 'id="userid"' in response.text:
+        raise KohaSessionExpired()
+
+    location = response.headers.get("location", "")
+    if response.status_code in (302, 303) and "opac-user.pl" in location:
+        return True, "Hold cancelled."
+
+    logger.warning(
+        "Unexpected response cancelling hold for roll_no=%s reserve_id=%s: status=%s location=%s",
+        roll_no, reserve_id, response.status_code, location,
+    )
+    return False, "Could not cancel hold. Try the OPAC website."
+
+
 # ---------------------------------------------------------------------------
 # JWT helpers
 # ---------------------------------------------------------------------------

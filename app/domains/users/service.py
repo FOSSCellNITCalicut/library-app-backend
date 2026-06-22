@@ -6,15 +6,19 @@ from app.domains.auth.service import (
     fetch_and_parse_charges_page,
     fetch_and_parse_hold_form,
 )
+from app.domains.auth.service import cancel_hold as koha_cancel_hold
 from app.domains.auth.service import place_hold as koha_place_hold
 from app.domains.users.schemas import (
     AccountActivityResponse,
     BookStatusResponse,
+    CancelHoldResponse,
     CheckedOutBook,
     FineHistoryResponse,
     FineHistoryItem,
     FinesResponse,
     HoldFormResponse,
+    HoldItem,
+    HoldsResponse,
     LoanSummary,
     PickupBranch,
     PlaceHoldResponse,
@@ -126,3 +130,30 @@ async def place_hold(
         return PlaceHoldResponse(success=success, message=message)
 
     return await call_with_koha_retry(roll_no, db, _place)
+
+
+async def get_holds(roll_no: str, db: AsyncSession) -> HoldsResponse:
+    async def _fetch(cgisessid: str) -> HoldsResponse:
+        account = await fetch_and_parse_account_page(cgisessid, roll_no)
+        return HoldsResponse(
+            items=[
+                HoldItem(
+                    reserve_id=h.reserve_id,
+                    biblio_id=h.biblio_id,
+                    title=h.title,
+                    branch=h.branch,
+                    status=h.status,
+                )
+                for h in account.holds
+            ],
+        )
+
+    return await call_with_koha_retry(roll_no, db, _fetch)
+
+
+async def cancel_hold(roll_no: str, reserve_id: str, db: AsyncSession) -> CancelHoldResponse:
+    async def _cancel(cgisessid: str) -> CancelHoldResponse:
+        success, message = await koha_cancel_hold(cgisessid, roll_no, reserve_id)
+        return CancelHoldResponse(success=success, message=message)
+
+    return await call_with_koha_retry(roll_no, db, _cancel)
