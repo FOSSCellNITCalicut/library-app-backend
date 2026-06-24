@@ -29,6 +29,7 @@ class BookSummarySchema(BaseModel):
     biblio_id: int = Field(description="Koha bibliographic record ID")
     title: str
     authors: StringList = Field(default_factory=list)
+    isbn: StringList = Field(default_factory=list, description="One or more ISBNs")
     edition: str | None = None
     cover_url: str | None = None
     available_copies: int = Field(
