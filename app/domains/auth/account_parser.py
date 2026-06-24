@@ -14,6 +14,9 @@ class CheckedOutBook:
     title: str
     author: str
     due_date: str
+    item_number: int = 0
+    renewals_allowed: int = 0
+    renewals_remaining: int = 0
 
 
 @dataclass
@@ -50,6 +53,7 @@ class AccountPageData:
     outstanding_fine: float = 0.0
     fine_history: list[FineHistoryItem] = field(default_factory=list)
     holds: list[HoldItem] = field(default_factory=list)
+    renewal_csrf_token: Optional[str] = None
 
 
 @dataclass
@@ -101,6 +105,7 @@ def parse_account_page(html: str, roll_no: str) -> AccountPageData:
     outstanding_fine = _parse_outstanding_fine(soup, roll_no)
     fine_history = _parse_fine_history(soup, roll_no)
     holds = _parse_holds(soup, roll_no)
+    renewal_csrf_token = _parse_renewal_csrf_token(soup, roll_no)
 
     return AccountPageData(
         name=name,
@@ -111,6 +116,7 @@ def parse_account_page(html: str, roll_no: str) -> AccountPageData:
         outstanding_fine=outstanding_fine,
         fine_history=fine_history,
         holds=holds,
+        renewal_csrf_token=renewal_csrf_token,
     )
 
 
@@ -280,11 +286,47 @@ def _parse_checked_out_books(soup: BeautifulSoup, roll_no: str) -> list[CheckedO
             if due_cell:
                 due_date = due_cell.get_text(strip=True)
 
+        # item_number: from checkbox/hidden input name="item", or from <tr id="checkout_NNN">
+        item_number = 0
+        item_input = row.find("input", attrs={"name": "item"})
+        if item_input:
+            try:
+                item_number = int(item_input.get("value", "0"))
+            except ValueError:
+                pass
+        if item_number == 0:
+            row_id = row.get("id", "")
+            m = re.search(r"(\d+)$", row_id)
+            if m:
+                try:
+                    item_number = int(m.group(1))
+                except ValueError:
+                    pass
+
+        # renewals: from a "renewcount" or "renewals" cell -- Koha renders
+        # "X renewals remaining" or "X of Y" or just "X"
+        renewals_allowed = 0
+        renewals_remaining = 0
+        renew_cell = row.find("td", class_=re.compile(r"renew", re.I))
+        if renew_cell:
+            text = renew_cell.get_text(strip=True)
+            m = re.search(r'(\d+)\s*(?:of|/)\s*(\d+)', text)
+            if m:
+                renewals_remaining = int(m.group(1))
+                renewals_allowed = int(m.group(2))
+            else:
+                m = re.search(r'(\d+)', text)
+                if m:
+                    renewals_remaining = int(m.group(1))
+
         books.append(CheckedOutBook(
             biblio_id=biblio_id,
             title=title,
             author=author,
             due_date=due_date,
+            item_number=item_number,
+            renewals_allowed=renewals_allowed,
+            renewals_remaining=renewals_remaining,
         ))
 
     if not books:
@@ -428,6 +470,19 @@ def _parse_fine_history(soup: BeautifulSoup, roll_no: str) -> list[FineHistoryIt
         logger.warning("Expected profile element 'fine history rows' missing for roll_no=%s", roll_no)
 
     return items
+
+
+def _parse_renewal_csrf_token(soup: BeautifulSoup, roll_no: str) -> Optional[str]:
+    """Extract the CSRF token from the renewal form (id="renewall") on opac-user.pl."""
+    renew_form = soup.find("form", id="renewall")
+    if renew_form is None:
+        renew_form = soup.find("form", attrs={"action": re.compile(r"opac-renew", re.I)})
+    if renew_form:
+        token_tag = renew_form.find("input", attrs={"name": "csrf_token"})
+        if token_tag:
+            return token_tag.get("value")
+    logger.info("Renewal form CSRF token not found for roll_no=%s (no checked-out books?)", roll_no)
+    return None
 
 
 def _parse_holds(soup: BeautifulSoup, roll_no: str) -> list[HoldItem]:
