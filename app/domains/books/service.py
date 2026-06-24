@@ -12,6 +12,10 @@ from app.domains.books.schemas import (
     BookSummarySchema,
 )
 
+from app.domains.books.schemas import BookAvailabilitySchema
+
+from app.integrations.koha.client import koha_client
+
 
 class ServiceValidationError(Exception):
     pass
@@ -26,10 +30,32 @@ class BookNotFoundError(Exception):
 MAX_PER_PAGE = 100
 ALLOWED_SORT_FIELDS = {"title", "authors", "published_year", "publisher"}
 
+def _is_item_available(item: dict) -> bool:
+    """5-condition rule from docs/api.md ("Book Availability"). Mirrors
+    AvailabilityWorker.compute_availability, kept independent here since
+    this path is live/DB-less and shouldn't import the sync worker module.
+    """
+    return (
+        item.get("checked_out_date") is None
+        and item.get("lost_status") == 0
+        and item.get("damaged_status") == 0
+        and item.get("not_for_loan_status") == 0
+        and item.get("withdrawn") == 0
+    )
+
+
+class BiblioNotFoundError(Exception):
+    """Raised when Koha has no record for the given biblio_id, or is unreachable."""
+
+    def __init__(self, biblio_id: int):
+        self.biblio_id = biblio_id
+        super().__init__(f"Koha returned no data for biblio_id={biblio_id}")
+
 
 class BookService:
     def __init__(self, repository):
         self._repository = repository
+        self._koha_client = koha_client
         self._cache = None # TODO: Implement caching layer for book details
 
     async def search_by_isbn(self, isbn) -> BookListResponse:
@@ -98,3 +124,26 @@ class BookService:
             )
         if sort_order not in {"asc", "desc"}:
             raise ServiceValidationError("sort_order must be 'asc' or 'desc'")
+            
+    
+
+
+    async def check_availability(self, biblio_id) -> BookAvailabilitySchema:
+        """Live availability check via Koha — used by the 'Check Availability'
+        button. Always hits Koha directly; never reads cached DB counts,
+        since those can be stale between sync worker passes.
+        """
+        items = await self._koha_client.get_availability(biblio_id)
+
+        if items is None:
+            raise BiblioNotFoundError(biblio_id)
+
+        total_copies = len(items)
+        available_copies = sum(1 for item in items if _is_item_available(item))
+
+        return BookAvailabilitySchema(
+            biblio_id=biblio_id,
+            available=available_copies > 0,
+            available_copies=available_copies,
+            total_copies=total_copies,
+        )

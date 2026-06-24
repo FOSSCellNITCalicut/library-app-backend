@@ -96,3 +96,12 @@ class BookListResponse(BaseModel):
     @property
     def has_more(self) -> bool:
         return self.page * self.per_page < self.total
+        
+        
+class BookAvailabilitySchema(BaseModel):
+    """Live availability check, fetched directly from Koha (not the DB cache)."""
+
+    biblio_id: int
+    available: bool = Field(description="True if at least one copy can currently be borrowed")
+    available_copies: int = Field(description="Number of copies currently available to borrow")
+    total_copies: int = Field(description="Total physical copies returned by Koha for this biblio_id")
