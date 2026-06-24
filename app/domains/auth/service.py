@@ -12,7 +12,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.domains.auth.account_parser import AccountPageData, parse_account_page, parse_charges_page
+from app.domains.auth.account_parser import (
+    AccountPageData,
+    HoldFormData,
+    parse_account_page,
+    parse_charges_page,
+    parse_hold_form,
+)
 from app.domains.auth.crypto import CredsEncryptionUnavailable, decrypt_password, encrypt_password
 from app.domains.auth.models import User
 
@@ -172,6 +178,134 @@ async def fetch_and_parse_charges_page(cgisessid: str, roll_no: str) -> AccountP
             roll_no, exc_info=True,
         )
         return AccountPageData(name=roll_no, outstanding_fine=0.0, fine_history=[])
+
+
+_KOHA_RESERVE_URL = f"{settings.KOHA_OPAC_URL}/cgi-bin/koha/opac-reserve.pl"
+
+
+async def fetch_and_parse_hold_form(cgisessid: str, roll_no: str, biblio_id: int) -> HoldFormData:
+    """
+    GET Koha's "place a hold" form for one biblio record (opac-reserve.pl).
+    Returns the csrf_token and pickup branches needed to submit place_hold().
+
+    Raises KohaSessionExpired when Koha returns the login page instead of the
+    hold form (stale CGISESSID). call_with_koha_retry() catches this and
+    transparently re-authenticates before retrying.
+    """
+    async with httpx.AsyncClient(timeout=10) as client:
+        response = await client.get(
+            _KOHA_RESERVE_URL,
+            params={"biblionumber": biblio_id},
+            cookies={"CGISESSID": cgisessid},
+        )
+    if 'id="userid"' in response.text:
+        raise KohaSessionExpired()
+    return parse_hold_form(response.text, roll_no, biblio_id)
+
+
+async def place_hold(cgisessid: str, roll_no: str, biblio_id: int, branch_code: str) -> tuple[bool, str]:
+    """
+    Submit a hold on Koha's OPAC (opac-reserve.pl, op=cud-place_reserve).
+
+    Koha's CSRF middleware ties the token to the session and (per upstream
+    source) doesn't promise it survives across requests, so this re-fetches
+    the form immediately before submitting rather than trusting a token the
+    client cached from an earlier GET.
+
+    Raises KohaSessionExpired -- same contract as fetch_and_parse_hold_form.
+    Returns (success, message).
+    """
+    form = await fetch_and_parse_hold_form(cgisessid, roll_no, biblio_id)
+    if not form.holdable:
+        reason = form.unavailable_reason or "This item is not currently available for holds."
+        return False, reason
+
+    if branch_code not in {b.code for b in form.branches}:
+        branch_code = next(
+            (b.code for b in form.branches if b.is_default),
+            form.branches[0].code,
+        )
+
+    async with httpx.AsyncClient(timeout=10, follow_redirects=False) as client:
+        response = await client.post(
+            _KOHA_RESERVE_URL,
+            data={
+                "op": "cud-place_reserve",
+                "csrf_token": form.csrf_token,
+                "biblionumbers": str(biblio_id),
+                "single_bib": str(biblio_id),
+                "reserve_mode": "single",
+                "branch": branch_code,
+            },
+            cookies={"CGISESSID": cgisessid},
+        )
+
+    if response.status_code == 200 and 'id="userid"' in response.text:
+        raise KohaSessionExpired()
+
+    location = response.headers.get("location", "")
+    if response.status_code in (302, 303) and "opac-user.pl" in location:
+        if "failed_holds=" in location:
+            logger.warning(
+                "Hold failed for roll_no=%s biblio_id=%s: %s", roll_no, biblio_id, location,
+            )
+            return False, (
+                "Hold request was declined. Possible reasons: you may already have a hold "
+                "on this item, the item is not holdable at the selected branch, or you have "
+                "reached the maximum number of holds allowed."
+            )
+        return True, "Hold placed successfully."
+
+    logger.warning(
+        "Unexpected response placing hold for roll_no=%s biblio_id=%s: status=%s location=%s",
+        roll_no, biblio_id, response.status_code, location,
+    )
+    return False, "Could not place hold. Try the OPAC website."
+
+
+_KOHA_MODREQUEST_URL = f"{settings.KOHA_OPAC_URL}/cgi-bin/koha/opac-modrequest.pl"
+
+
+async def cancel_hold(cgisessid: str, roll_no: str, reserve_id: str) -> tuple[bool, str]:
+    """
+    Cancel an existing hold via Koha's OPAC (opac-modrequest.pl, op=cud-cancel).
+
+    The cancel form's csrf_token is scoped to that specific hold row (see
+    HoldItem docstring), so this re-fetches the patron's current holds list
+    to get a fresh one rather than trusting anything the client cached.
+
+    Raises KohaSessionExpired -- same contract as fetch_and_parse_account_page.
+    Returns (success, message).
+    """
+    account = await fetch_and_parse_account_page(cgisessid, roll_no)
+    hold = next((h for h in account.holds if h.reserve_id == reserve_id), None)
+    if hold is None or not hold.csrf_token:
+        return False, "Could not find that hold. It may already be cancelled."
+
+    async with httpx.AsyncClient(timeout=10, follow_redirects=False) as client:
+        response = await client.post(
+            _KOHA_MODREQUEST_URL,
+            data={
+                "op": "cud-cancel",
+                "csrf_token": hold.csrf_token,
+                "biblionumber": str(hold.biblio_id),
+                "reserve_id": reserve_id,
+            },
+            cookies={"CGISESSID": cgisessid},
+        )
+
+    if response.status_code == 200 and 'id="userid"' in response.text:
+        raise KohaSessionExpired()
+
+    location = response.headers.get("location", "")
+    if response.status_code in (302, 303) and "opac-user.pl" in location:
+        return True, "Hold cancelled."
+
+    logger.warning(
+        "Unexpected response cancelling hold for roll_no=%s reserve_id=%s: status=%s location=%s",
+        roll_no, reserve_id, response.status_code, location,
+    )
+    return False, "Could not cancel hold. Try the OPAC website."
 
 
 # ---------------------------------------------------------------------------

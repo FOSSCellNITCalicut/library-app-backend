@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel
 
 
@@ -41,3 +43,41 @@ class AccountActivityResponse(BaseModel):
 
 class BookStatusResponse(BaseModel):
     borrowed_by_current_user: bool
+
+
+class PickupBranch(BaseModel):
+    code: str
+    name: str
+    is_default: bool = False
+
+
+class HoldFormResponse(BaseModel):
+    biblio_id: int
+    holdable: bool
+    branches: list[PickupBranch]
+
+
+class PlaceHoldRequest(BaseModel):
+    branch_code: Literal["LIB", "MAT"]
+
+
+class PlaceHoldResponse(BaseModel):
+    success: bool
+    message: str
+
+
+class HoldItem(BaseModel):
+    reserve_id: str
+    biblio_id: int
+    title: str
+    branch: str
+    status: str
+
+
+class HoldsResponse(BaseModel):
+    items: list[HoldItem]
+
+
+class CancelHoldResponse(BaseModel):
+    success: bool
+    message: str
