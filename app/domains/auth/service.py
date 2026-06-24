@@ -217,7 +217,8 @@ async def place_hold(cgisessid: str, roll_no: str, biblio_id: int, branch_code: 
     """
     form = await fetch_and_parse_hold_form(cgisessid, roll_no, biblio_id)
     if not form.holdable:
-        return False, "Holds aren't available for this item right now. Try the OPAC website."
+        reason = form.unavailable_reason or "This item is not currently available for holds."
+        return False, reason
 
     if branch_code not in {b.code for b in form.branches}:
         branch_code = next(
@@ -248,8 +249,12 @@ async def place_hold(cgisessid: str, roll_no: str, biblio_id: int, branch_code: 
             logger.warning(
                 "Hold failed for roll_no=%s biblio_id=%s: %s", roll_no, biblio_id, location,
             )
-            return False, "Koha rejected this hold. Try placing it on the OPAC website."
-        return True, "Hold placed."
+            return False, (
+                "Hold request was declined. Possible reasons: you may already have a hold "
+                "on this item, the item is not holdable at the selected branch, or you have "
+                "reached the maximum number of holds allowed."
+            )
+        return True, "Hold placed successfully."
 
     logger.warning(
         "Unexpected response placing hold for roll_no=%s biblio_id=%s: status=%s location=%s",

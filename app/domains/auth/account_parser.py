@@ -61,21 +61,9 @@ class PickupBranch:
 
 @dataclass
 class HoldFormData:
-    """
-    What's needed to submit a hold on opac-reserve.pl: the CSRF token Koha
-    embeds in the GET response (required on the POST, validated against the
-    session -- see Koha::Middleware::CSRF) and the pickup branches the patron
-    can choose from.
-
-    `holdable` is best-effort: True only when both a token and at least one
-    branch were found. Koha also renders a free-text reason when a hold can't
-    be placed (already held, too many holds, etc), but that text isn't parsed
-    here -- it isn't stable enough to match reliably without a known-good
-    sample of NITC's actual Koha templates. Treat `holdable=False` as "show a
-    generic 'try the OPAC website' message", not as a parsed reason.
-    """
     csrf_token: Optional[str] = None
     branches: list[PickupBranch] = field(default_factory=list)
+    unavailable_reason: Optional[str] = None
 
     @property
     def holdable(self) -> bool:
@@ -506,6 +494,20 @@ def _parse_holds(soup: BeautifulSoup, roll_no: str) -> list[HoldItem]:
     return holds
 
 
+def _extract_hold_unavailable_reason(soup: BeautifulSoup) -> Optional[str]:
+    """
+    Best-effort extraction of the reason Koha shows when a hold can't be placed.
+    Koha renders these as Bootstrap alert divs inside the page body.
+    """
+    for selector in [".alert-danger", ".alert-warning", ".alert"]:
+        el = soup.select_one(selector)
+        if el:
+            text = re.sub(r'\s+', ' ', el.get_text(separator=" ", strip=True)).strip()
+            if text:
+                return text[:300]
+    return None
+
+
 def parse_hold_form(html: str, roll_no: str, biblio_id: int) -> HoldFormData:
     """
     Parse Koha's opac-reserve.pl "place a hold" form (GET response).
@@ -545,4 +547,8 @@ def parse_hold_form(html: str, roll_no: str, biblio_id: int) -> HoldFormData:
             roll_no, biblio_id,
         )
 
-    return HoldFormData(csrf_token=csrf_token, branches=branches)
+    unavailable_reason: Optional[str] = None
+    if not csrf_token or not branches:
+        unavailable_reason = _extract_hold_unavailable_reason(soup)
+
+    return HoldFormData(csrf_token=csrf_token, branches=branches, unavailable_reason=unavailable_reason)

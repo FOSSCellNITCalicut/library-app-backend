@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel
 
 
@@ -56,7 +58,7 @@ class HoldFormResponse(BaseModel):
 
 
 class PlaceHoldRequest(BaseModel):
-    branch_code: str
+    branch_code: Literal["LIB", "MAT"]
 
 
 class PlaceHoldResponse(BaseModel):

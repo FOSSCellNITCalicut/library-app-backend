@@ -126,6 +126,12 @@ async def place_hold(
     roll_no: str, biblio_id: int, branch_code: str, db: AsyncSession
 ) -> PlaceHoldResponse:
     async def _place(cgisessid: str) -> PlaceHoldResponse:
+        account = await fetch_and_parse_account_page(cgisessid, roll_no)
+        if any(h.biblio_id == biblio_id for h in account.holds):
+            return PlaceHoldResponse(
+                success=False,
+                message="You already have an active hold on this item.",
+            )
         success, message = await koha_place_hold(cgisessid, roll_no, biblio_id, branch_code)
         return PlaceHoldResponse(success=success, message=message)
 
