@@ -5,9 +5,12 @@ from pydantic import BaseModel
 
 class CheckedOutBook(BaseModel):
     biblio_id: int
+    item_number: int = 0
     title: str
     author: str
     due_date: str
+    renewals_allowed: int = 0
+    renewals_remaining: int = 0
 
 
 class LoanSummary(BaseModel):
@@ -79,5 +82,10 @@ class HoldsResponse(BaseModel):
 
 
 class CancelHoldResponse(BaseModel):
+    success: bool
+    message: str
+
+
+class RenewBookResponse(BaseModel):
     success: bool
     message: str
