@@ -36,6 +36,11 @@ class Settings(BaseSettings):
     
     KOHA_AVAILABILITY_TIMEOUT_SECONDS: float = 3.0
 
+    # Google Books
+    GOOGLE_BOOKS_API_KEY: str
+    GOOGLE_BOOKS_WORKER_DELAY: int = 60
+    GOOGLE_BOOKS_SCAN_BATCH_SIZE: int = 10
+
     # Logging
     LOG_LEVEL: str = "INFO"
     
