@@ -106,8 +106,18 @@ async def get_book_status(
 ) -> BookStatusResponse:
     async def _fetch(cgisessid: str) -> BookStatusResponse:
         account = await fetch_and_parse_account_page(cgisessid, roll_no)
-        borrowed = any(book.biblio_id == biblio_id for book in account.checked_out_books)
-        return BookStatusResponse(borrowed_by_current_user=borrowed)
+        match = next(
+            (book for book in account.checked_out_books if book.biblio_id == biblio_id),
+            None,
+        )
+        if match is None:
+            return BookStatusResponse(borrowed_by_current_user=False)
+        return BookStatusResponse(
+            borrowed_by_current_user=True,
+            issue_id=match.issue_id,
+            renewals_allowed=match.renewals_allowed,
+            renewals_remaining=match.renewals_remaining,
+        )
 
     return await call_with_koha_retry(roll_no, db, _fetch)
 

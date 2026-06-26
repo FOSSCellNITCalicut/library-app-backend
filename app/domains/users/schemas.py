@@ -46,6 +46,9 @@ class AccountActivityResponse(BaseModel):
 
 class BookStatusResponse(BaseModel):
     borrowed_by_current_user: bool
+    issue_id: int = 0
+    renewals_allowed: int = 0
+    renewals_remaining: int = 0
 
 
 class PickupBranch(BaseModel):
