@@ -14,7 +14,7 @@ class CheckedOutBook:
     title: str
     author: str
     due_date: str
-    item_number: int = 0
+    issue_id: int = 0
     renewals_allowed: int = 0
     renewals_remaining: int = 0
 
@@ -286,30 +286,41 @@ def _parse_checked_out_books(soup: BeautifulSoup, roll_no: str) -> list[CheckedO
             if due_cell:
                 due_date = due_cell.get_text(strip=True)
 
-        # item_number: from checkbox/hidden input name="item", or from <tr id="checkout_NNN">
-        item_number = 0
-        item_input = row.find("input", attrs={"name": "item"})
-        if item_input:
+        # issue_id: Koha's loan record ID, needed by opac-renew.pl.
+        # Primary: checkbox input[name="issue"] in the row (batch renewal form).
+        # Secondary: data-issue attribute on the per-item renew link.
+        # Tertiary: trailing digits from the <tr id="..."> attribute.
+        issue_id = 0
+        issue_input = row.find("input", attrs={"name": "issue"})
+        if issue_input:
             try:
-                item_number = int(item_input.get("value", "0"))
+                issue_id = int(issue_input.get("value", "0"))
             except ValueError:
                 pass
-        if item_number == 0:
+        if issue_id == 0:
+            renew_link = row.find("a", attrs={"data-op": "cud-renew"})
+            if renew_link:
+                try:
+                    issue_id = int(renew_link.get("data-issue", "0"))
+                except ValueError:
+                    pass
+        if issue_id == 0:
             row_id = row.get("id", "")
             m = re.search(r"(\d+)$", row_id)
             if m:
                 try:
-                    item_number = int(m.group(1))
+                    issue_id = int(m.group(1))
                 except ValueError:
                     pass
 
-        # renewals: from a "renewcount" or "renewals" cell -- Koha renders
-        # "X renewals remaining" or "X of Y" or just "X"
+        # Renewal counts: Koha renders a <span class="renewals"> inside
+        # <td class="renew"> with text "X of Y renewals remaining".
         renewals_allowed = 0
         renewals_remaining = 0
         renew_cell = row.find("td", class_=re.compile(r"renew", re.I))
         if renew_cell:
-            text = renew_cell.get_text(strip=True)
+            span = renew_cell.find("span", class_=re.compile(r"renewal", re.I))
+            text = (span or renew_cell).get_text(strip=True)
             m = re.search(r'(\d+)\s*(?:of|/)\s*(\d+)', text)
             if m:
                 renewals_remaining = int(m.group(1))
@@ -324,7 +335,7 @@ def _parse_checked_out_books(soup: BeautifulSoup, roll_no: str) -> list[CheckedO
             title=title,
             author=author,
             due_date=due_date,
-            item_number=item_number,
+            issue_id=issue_id,
             renewals_allowed=renewals_allowed,
             renewals_remaining=renewals_remaining,
         ))

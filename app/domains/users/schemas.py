@@ -5,7 +5,7 @@ from pydantic import BaseModel
 
 class CheckedOutBook(BaseModel):
     biblio_id: int
-    item_number: int = 0
+    issue_id: int = 0
     title: str
     author: str
     due_date: str

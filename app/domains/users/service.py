@@ -42,7 +42,7 @@ async def get_user_profile(roll_no: str, db: AsyncSession) -> UserMeResponse:
             checked_out_books=[
                 CheckedOutBook(
                     biblio_id=book.biblio_id,
-                    item_number=book.item_number,
+                    issue_id=book.issue_id,
                     title=book.title,
                     author=book.author,
                     due_date=book.due_date,
@@ -162,9 +162,9 @@ async def get_holds(roll_no: str, db: AsyncSession) -> HoldsResponse:
     return await call_with_koha_retry(roll_no, db, _fetch)
 
 
-async def renew_book(roll_no: str, item_number: int, db: AsyncSession) -> RenewBookResponse:
+async def renew_book(roll_no: str, issue_id: int, db: AsyncSession) -> RenewBookResponse:
     async def _renew(cgisessid: str) -> RenewBookResponse:
-        success, message = await koha_renew_book(cgisessid, roll_no, item_number)
+        success, message = await koha_renew_book(cgisessid, roll_no, issue_id)
         return RenewBookResponse(success=success, message=message)
 
     return await call_with_koha_retry(roll_no, db, _renew)
