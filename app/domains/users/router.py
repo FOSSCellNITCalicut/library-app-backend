@@ -79,13 +79,13 @@ async def user_hold_form(
     return await service.get_hold_form(roll_no=claims["sub"], biblio_id=biblio_id, db=db)
 
 
-@router.post("/renew/{item_number}", response_model=RenewBookResponse)
+@router.post("/renew/{issue_id}", response_model=RenewBookResponse)
 async def user_renew_book(
-    item_number: int,
+    issue_id: int,
     claims: Annotated[dict, Depends(get_current_user)],
     db: DB,
 ):
-    return await service.renew_book(roll_no=claims["sub"], item_number=item_number, db=db)
+    return await service.renew_book(roll_no=claims["sub"], issue_id=issue_id, db=db)
 
 
 @router.post("/holds/{biblio_id}", response_model=PlaceHoldResponse)

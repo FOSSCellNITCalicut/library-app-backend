@@ -309,13 +309,15 @@ async def cancel_hold(cgisessid: str, roll_no: str, reserve_id: str) -> tuple[bo
     return False, "Could not cancel hold. Try the OPAC website."
 
 
-async def renew_book(cgisessid: str, roll_no: str, item_number: int) -> tuple[bool, str]:
+async def renew_book(cgisessid: str, roll_no: str, issue_id: int) -> tuple[bool, str]:
     """
     Renew a checked-out item via Koha's OPAC (opac-renew.pl, op=cud-renew).
 
-    Re-fetches the account page for a fresh CSRF token before POSTing -- the
-    token is scoped to the renewal form session and must not be cached.
+    Koha identifies loans by issue_id (the loan record), not by itemnumber.
+    The POST parameter is `issue` (not `item`) -- confirmed from opac-renew.pl
+    source which calls multi_param('issue').
 
+    Re-fetches the account page for a fresh CSRF token before POSTing.
     Raises KohaSessionExpired -- same contract as fetch_and_parse_account_page.
     Returns (success, message).
     """
@@ -330,7 +332,7 @@ async def renew_book(cgisessid: str, roll_no: str, item_number: int) -> tuple[bo
             data={
                 "op": "cud-renew",
                 "csrf_token": csrf_token,
-                "item": str(item_number),
+                "issue": str(issue_id),
             },
             cookies={"CGISESSID": cgisessid},
         )
@@ -349,21 +351,21 @@ async def renew_book(cgisessid: str, roll_no: str, item_number: int) -> tuple[bo
         for key, message in _RENEWAL_ERRORS.items():
             if key in location:
                 logger.warning(
-                    "Renewal declined for roll_no=%s item=%s: %s", roll_no, item_number, key,
+                    "Renewal declined for roll_no=%s issue_id=%s: %s", roll_no, issue_id, key,
                 )
                 return False, message
 
         if "error=" in location or "failed" in location:
             logger.warning(
-                "Renewal declined for roll_no=%s item=%s: %s", roll_no, item_number, location,
+                "Renewal declined for roll_no=%s issue_id=%s: %s", roll_no, issue_id, location,
             )
             return False, "Renewal was declined by the library. Check the OPAC website for details."
 
         return True, "Book renewed successfully."
 
     logger.warning(
-        "Unexpected response renewing item for roll_no=%s item=%s: status=%s location=%s",
-        roll_no, item_number, response.status_code, location,
+        "Unexpected response renewing for roll_no=%s issue_id=%s: status=%s location=%s",
+        roll_no, issue_id, response.status_code, location,
     )
     return False, "Could not renew. Try the OPAC website."
 
