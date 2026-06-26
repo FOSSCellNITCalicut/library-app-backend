@@ -8,6 +8,10 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 
+class RateLimitedError(Exception):
+    """Raised when Google Books API returns 429."""
+
+
 class GoogleBooksClient:
     BASE_URL = "https://www.googleapis.com/books/v1"
 
@@ -32,8 +36,8 @@ class GoogleBooksClient:
             )
 
             if response.status_code == 429:
-                logger.warning("Google Books API rate limited (429)")
-                return None
+                logger.warning("Google Books API rate limited (429): %s", response.text[:300])
+                raise RateLimitedError()
 
             response.raise_for_status()
 
@@ -55,10 +59,19 @@ class GoogleBooksClient:
 
         volume_info = items[0].get("volumeInfo", {})
         result = {}
-        
-        raw_thumbnail = volume_info.get("imageLinks", {}).get("thumbnail")
-        if raw_thumbnail:
-            result["cover_url"] = raw_thumbnail.replace("http://", "https://")
+
+        image_links = volume_info.get("imageLinks", {})
+        cover_url = None
+        for key in ("extraLarge", "large", "medium", "thumbnail", "smallThumbnail"):
+            url = image_links.get(key)
+            if url:
+                cover_url = url.replace("http://", "https://")
+                if key == "thumbnail":
+                    cover_url = cover_url.replace("zoom=1", "zoom=3")
+                break
+
+        if cover_url:
+            result["cover_url"] = cover_url
 
         raw_description = volume_info.get("description")
         if raw_description:
