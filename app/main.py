@@ -11,6 +11,8 @@ from app.integrations.koha.client import KohaClient
 from app.domains.sync.workers.availability_worker import AvailabilityWorker
 from app.domains.sync.workers.metadata_cleanup_worker import MetadataCleanupWorker
 from app.domains.sync.workers.metadata_worker import MetadataWorker
+from app.integrations.google_books.client import google_books_client
+from app.workers.enrichment.google_books_worker import GoogleBooksWorker
 
 __version__ = "0.1.0"
 
@@ -58,6 +60,16 @@ async def lifespan(app: FastAPI):
     
     tasks.append(cleanup_task) # Keep reference to cleanup task to cancel properly later
     logger.info("Metadata Cleanup Worker Started")
+
+    # Start the Google Books enrichment worker (runs regardless of SEED_DATA since it only needs the DB)
+    clients.append(google_books_client) # Keep reference to close the httpx client on shutdown
+    google_books_worker = GoogleBooksWorker()
+    google_books_task = asyncio.create_task(
+        google_books_worker.run(), name="google-books-worker"
+    )
+
+    tasks.append(google_books_task)
+    logger.info("Google Books Worker Started")
 
     try:
         yield

@@ -76,7 +76,7 @@ alembic upgrade head
 uvicorn app.main:app --reload
 ```
 
-The lifespan hook will start the workers as background tasks. The API serves on `http://localhost:8000` with `/health` available.
+The lifespan hook will start the workers as background tasks. The API serves on `http://localhost:8000` with `/health` available. Run without --reload for sometime initially to google cover page enrichment to work
 
 ## Testing the API
 
