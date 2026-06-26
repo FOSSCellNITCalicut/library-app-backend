@@ -342,6 +342,14 @@ def _parse_checked_out_books(soup: BeautifulSoup, roll_no: str) -> list[CheckedO
                 renewals_remaining = int(m.group(1))
                 renewals_allowed = int(m.group(2))
 
+        if renewals_allowed == 0 and renewals_remaining == 0:
+            logger.debug(
+                "renewal_count_parse_failed biblio_id=%s renew_cell_html=%r row_id=%r",
+                biblio_id,
+                str(renew_cell) if renew_cell else None,
+                row.get("id", ""),
+            )
+
         books.append(CheckedOutBook(
             biblio_id=biblio_id,
             title=title,
