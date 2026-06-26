@@ -313,42 +313,36 @@ def _parse_checked_out_books(soup: BeautifulSoup, roll_no: str) -> list[CheckedO
                 except ValueError:
                     pass
 
-        # Renewal counts: Koha renders a <span class="renewals"> inside
-        # <td class="renew"> with text "X of Y renewals remaining".
-        # Fall back to searching the whole row in case NITC's template
-        # uses different class names or nesting.
+        # Renewal counts.
+        # Koha sets data-order on td.renew to the remaining renewal count (used
+        # for DataTables sorting). This is reliable for both the renewable case
+        # (data-order="2") and the exhausted case (data-order="0", where the
+        # cell just contains <span class="usr-msg no-renew-too-many">Not
+        # renewable</span> with no span.renewals at all).
+        # span.renewals gives us the full "X of Y" text but only appears when
+        # renewals_remaining > 0.
         renewals_allowed = 0
         renewals_remaining = 0
         renew_cell = row.find("td", class_=re.compile(r"renew", re.I))
-        renewal_span = (
-            renew_cell.find("span", class_=re.compile(r"renewal", re.I))
-            if renew_cell else None
-        ) or row.find("span", class_=re.compile(r"renewal", re.I))
 
-        if renewal_span:
-            text = renewal_span.get_text(strip=True)
-            m = re.search(r'(\d+)\s*(?:of|/)\s*(\d+)', text)
-            if m:
-                renewals_remaining = int(m.group(1))
-                renewals_allowed = int(m.group(2))
-            else:
-                m = re.search(r'(\d+)', text)
+        if renew_cell:
+            data_order = renew_cell.get("data-order")
+            if data_order is not None:
+                try:
+                    renewals_remaining = int(data_order)
+                except ValueError:
+                    pass
+
+            # span.renewals only present when remaining > 0; gives us allowed.
+            renewal_span = renew_cell.find("span", class_=re.compile(r"^renewals?$", re.I))
+            if not renewal_span:
+                renewal_span = row.find("span", class_=re.compile(r"^renewals?$", re.I))
+            if renewal_span:
+                text = renewal_span.get_text(strip=True)
+                m = re.search(r'(\d+)\s*(?:of|/)\s*(\d+)', text)
                 if m:
                     renewals_remaining = int(m.group(1))
-        elif renew_cell:
-            text = renew_cell.get_text(strip=True)
-            m = re.search(r'(\d+)\s*(?:of|/)\s*(\d+)', text)
-            if m:
-                renewals_remaining = int(m.group(1))
-                renewals_allowed = int(m.group(2))
-
-        if renewals_allowed == 0 and renewals_remaining == 0:
-            logger.debug(
-                "renewal_count_parse_failed biblio_id=%s renew_cell_html=%r row_id=%r",
-                biblio_id,
-                str(renew_cell) if renew_cell else None,
-                row.get("id", ""),
-            )
+                    renewals_allowed = int(m.group(2))
 
         books.append(CheckedOutBook(
             biblio_id=biblio_id,
