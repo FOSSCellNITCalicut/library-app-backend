@@ -14,6 +14,9 @@ class CheckedOutBook:
     title: str
     author: str
     due_date: str
+    issue_id: int = 0
+    renewals_allowed: int = 0
+    renewals_remaining: int = 0
 
 
 @dataclass
@@ -50,6 +53,7 @@ class AccountPageData:
     outstanding_fine: float = 0.0
     fine_history: list[FineHistoryItem] = field(default_factory=list)
     holds: list[HoldItem] = field(default_factory=list)
+    renewal_csrf_token: Optional[str] = None
 
 
 @dataclass
@@ -101,6 +105,7 @@ def parse_account_page(html: str, roll_no: str) -> AccountPageData:
     outstanding_fine = _parse_outstanding_fine(soup, roll_no)
     fine_history = _parse_fine_history(soup, roll_no)
     holds = _parse_holds(soup, roll_no)
+    renewal_csrf_token = _parse_renewal_csrf_token(soup, roll_no)
 
     return AccountPageData(
         name=name,
@@ -111,6 +116,7 @@ def parse_account_page(html: str, roll_no: str) -> AccountPageData:
         outstanding_fine=outstanding_fine,
         fine_history=fine_history,
         holds=holds,
+        renewal_csrf_token=renewal_csrf_token,
     )
 
 
@@ -280,11 +286,72 @@ def _parse_checked_out_books(soup: BeautifulSoup, roll_no: str) -> list[CheckedO
             if due_cell:
                 due_date = due_cell.get_text(strip=True)
 
+        # issue_id: Koha's loan record ID, needed by opac-renew.pl.
+        # Primary: checkbox input[name="issue"] in the row (batch renewal form).
+        # Secondary: data-issue attribute on the per-item renew link.
+        # Tertiary: trailing digits from the <tr id="..."> attribute.
+        issue_id = 0
+        issue_input = row.find("input", attrs={"name": "issue"})
+        if issue_input:
+            try:
+                issue_id = int(issue_input.get("value", "0"))
+            except ValueError:
+                pass
+        if issue_id == 0:
+            renew_link = row.find("a", attrs={"data-op": "cud-renew"})
+            if renew_link:
+                try:
+                    issue_id = int(renew_link.get("data-issue", "0"))
+                except ValueError:
+                    pass
+        if issue_id == 0:
+            row_id = row.get("id", "")
+            m = re.search(r"(\d+)$", row_id)
+            if m:
+                try:
+                    issue_id = int(m.group(1))
+                except ValueError:
+                    pass
+
+        # Renewal counts.
+        # Koha sets data-order on td.renew to the remaining renewal count (used
+        # for DataTables sorting). This is reliable for both the renewable case
+        # (data-order="2") and the exhausted case (data-order="0", where the
+        # cell just contains <span class="usr-msg no-renew-too-many">Not
+        # renewable</span> with no span.renewals at all).
+        # span.renewals gives us the full "X of Y" text but only appears when
+        # renewals_remaining > 0.
+        renewals_allowed = 0
+        renewals_remaining = 0
+        renew_cell = row.find("td", class_=re.compile(r"renew", re.I))
+
+        if renew_cell:
+            data_order = renew_cell.get("data-order")
+            if data_order is not None:
+                try:
+                    renewals_remaining = int(data_order)
+                except ValueError:
+                    pass
+
+            # span.renewals only present when remaining > 0; gives us allowed.
+            renewal_span = renew_cell.find("span", class_=re.compile(r"^renewals?$", re.I))
+            if not renewal_span:
+                renewal_span = row.find("span", class_=re.compile(r"^renewals?$", re.I))
+            if renewal_span:
+                text = renewal_span.get_text(strip=True)
+                m = re.search(r'(\d+)\s*(?:of|/)\s*(\d+)', text)
+                if m:
+                    renewals_remaining = int(m.group(1))
+                    renewals_allowed = int(m.group(2))
+
         books.append(CheckedOutBook(
             biblio_id=biblio_id,
             title=title,
             author=author,
             due_date=due_date,
+            issue_id=issue_id,
+            renewals_allowed=renewals_allowed,
+            renewals_remaining=renewals_remaining,
         ))
 
     if not books:
@@ -428,6 +495,19 @@ def _parse_fine_history(soup: BeautifulSoup, roll_no: str) -> list[FineHistoryIt
         logger.warning("Expected profile element 'fine history rows' missing for roll_no=%s", roll_no)
 
     return items
+
+
+def _parse_renewal_csrf_token(soup: BeautifulSoup, roll_no: str) -> Optional[str]:
+    """Extract the CSRF token from the renewal form (id="renewall") on opac-user.pl."""
+    renew_form = soup.find("form", id="renewall")
+    if renew_form is None:
+        renew_form = soup.find("form", attrs={"action": re.compile(r"opac-renew", re.I)})
+    if renew_form:
+        token_tag = renew_form.find("input", attrs={"name": "csrf_token"})
+        if token_tag:
+            return token_tag.get("value")
+    logger.info("Renewal form CSRF token not found for roll_no=%s (no checked-out books?)", roll_no)
+    return None
 
 
 def _parse_holds(soup: BeautifulSoup, roll_no: str) -> list[HoldItem]:

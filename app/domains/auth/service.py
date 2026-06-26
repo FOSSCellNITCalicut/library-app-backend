@@ -264,6 +264,7 @@ async def place_hold(cgisessid: str, roll_no: str, biblio_id: int, branch_code: 
 
 
 _KOHA_MODREQUEST_URL = f"{settings.KOHA_OPAC_URL}/cgi-bin/koha/opac-modrequest.pl"
+_KOHA_RENEW_URL = f"{settings.KOHA_OPAC_URL}/cgi-bin/koha/opac-renew.pl"
 
 
 async def cancel_hold(cgisessid: str, roll_no: str, reserve_id: str) -> tuple[bool, str]:
@@ -306,6 +307,67 @@ async def cancel_hold(cgisessid: str, roll_no: str, reserve_id: str) -> tuple[bo
         roll_no, reserve_id, response.status_code, location,
     )
     return False, "Could not cancel hold. Try the OPAC website."
+
+
+async def renew_book(cgisessid: str, roll_no: str, issue_id: int) -> tuple[bool, str]:
+    """
+    Renew a checked-out item via Koha's OPAC (opac-renew.pl, op=cud-renew).
+
+    Koha identifies loans by issue_id (the loan record), not by itemnumber.
+    The POST parameter is `issue` (not `item`) -- confirmed from opac-renew.pl
+    source which calls multi_param('issue').
+
+    Re-fetches the account page for a fresh CSRF token before POSTing.
+    Raises KohaSessionExpired -- same contract as fetch_and_parse_account_page.
+    Returns (success, message).
+    """
+    account = await fetch_and_parse_account_page(cgisessid, roll_no)
+    csrf_token = account.renewal_csrf_token
+    if not csrf_token:
+        return False, "Could not get renewal token from Koha. Try renewing on the OPAC website."
+
+    async with httpx.AsyncClient(timeout=10, follow_redirects=False) as client:
+        response = await client.post(
+            _KOHA_RENEW_URL,
+            data={
+                "op": "cud-renew",
+                "csrf_token": csrf_token,
+                "issue": str(issue_id),
+            },
+            cookies={"CGISESSID": cgisessid},
+        )
+
+    if response.status_code == 200 and 'id="userid"' in response.text:
+        raise KohaSessionExpired()
+
+    location = response.headers.get("location", "")
+    if response.status_code in (302, 303) and "opac-user.pl" in location:
+        _RENEWAL_ERRORS: dict[str, str] = {
+            "too_many_renewals": "You've used all your renewals for this item.",
+            "cannot_renew_item_reserves": "This item can't be renewed because it's on hold for another patron.",
+            "no_checkout": "This item doesn't appear to be checked out to you.",
+            "too_many_renewals_for_patron": "You've reached the maximum number of renewals allowed.",
+        }
+        for key, message in _RENEWAL_ERRORS.items():
+            if key in location:
+                logger.warning(
+                    "Renewal declined for roll_no=%s issue_id=%s: %s", roll_no, issue_id, key,
+                )
+                return False, message
+
+        if "error=" in location or "failed" in location:
+            logger.warning(
+                "Renewal declined for roll_no=%s issue_id=%s: %s", roll_no, issue_id, location,
+            )
+            return False, "Renewal was declined by the library. Check the OPAC website for details."
+
+        return True, "Book renewed successfully."
+
+    logger.warning(
+        "Unexpected response renewing for roll_no=%s issue_id=%s: status=%s location=%s",
+        roll_no, issue_id, response.status_code, location,
+    )
+    return False, "Could not renew. Try the OPAC website."
 
 
 # ---------------------------------------------------------------------------

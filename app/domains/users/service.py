@@ -8,6 +8,7 @@ from app.domains.auth.service import (
 )
 from app.domains.auth.service import cancel_hold as koha_cancel_hold
 from app.domains.auth.service import place_hold as koha_place_hold
+from app.domains.auth.service import renew_book as koha_renew_book
 from app.domains.users.schemas import (
     AccountActivityResponse,
     BookStatusResponse,
@@ -22,6 +23,7 @@ from app.domains.users.schemas import (
     LoanSummary,
     PickupBranch,
     PlaceHoldResponse,
+    RenewBookResponse,
     UserMeResponse,
 )
 
@@ -40,9 +42,12 @@ async def get_user_profile(roll_no: str, db: AsyncSession) -> UserMeResponse:
             checked_out_books=[
                 CheckedOutBook(
                     biblio_id=book.biblio_id,
+                    issue_id=book.issue_id,
                     title=book.title,
                     author=book.author,
                     due_date=book.due_date,
+                    renewals_allowed=book.renewals_allowed,
+                    renewals_remaining=book.renewals_remaining,
                 )
                 for book in account.checked_out_books
             ],
@@ -101,8 +106,18 @@ async def get_book_status(
 ) -> BookStatusResponse:
     async def _fetch(cgisessid: str) -> BookStatusResponse:
         account = await fetch_and_parse_account_page(cgisessid, roll_no)
-        borrowed = any(book.biblio_id == biblio_id for book in account.checked_out_books)
-        return BookStatusResponse(borrowed_by_current_user=borrowed)
+        match = next(
+            (book for book in account.checked_out_books if book.biblio_id == biblio_id),
+            None,
+        )
+        if match is None:
+            return BookStatusResponse(borrowed_by_current_user=False)
+        return BookStatusResponse(
+            borrowed_by_current_user=True,
+            issue_id=match.issue_id,
+            renewals_allowed=match.renewals_allowed,
+            renewals_remaining=match.renewals_remaining,
+        )
 
     return await call_with_koha_retry(roll_no, db, _fetch)
 
@@ -155,6 +170,14 @@ async def get_holds(roll_no: str, db: AsyncSession) -> HoldsResponse:
         )
 
     return await call_with_koha_retry(roll_no, db, _fetch)
+
+
+async def renew_book(roll_no: str, issue_id: int, db: AsyncSession) -> RenewBookResponse:
+    async def _renew(cgisessid: str) -> RenewBookResponse:
+        success, message = await koha_renew_book(cgisessid, roll_no, issue_id)
+        return RenewBookResponse(success=success, message=message)
+
+    return await call_with_koha_retry(roll_no, db, _renew)
 
 
 async def cancel_hold(roll_no: str, reserve_id: str, db: AsyncSession) -> CancelHoldResponse:
