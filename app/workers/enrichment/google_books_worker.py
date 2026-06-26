@@ -1,0 +1,81 @@
+import asyncio
+import logging
+from datetime import datetime, timezone
+
+from sqlalchemy import func, select, update
+
+from app.core.config import settings
+from app.db.database import AsyncSessionLocal
+from app.domains.books.models import Book
+from app.integrations.google_books.client import google_books_client
+
+
+logger = logging.getLogger(__name__)
+
+
+def pick_isbn(isbns: list[str]) -> str | None:
+    # pick a valid isbbn, i prefer the new 13 digits one
+    cleaned = [s.replace("-", "").replace(" ", "") for s in isbns if s]
+    cleaned = [s for s in cleaned if s.isdigit() and len(s) >= 10]
+    if not cleaned:
+        return None
+    cleaned.sort(key=len, reverse=True)
+    return cleaned[0]
+
+
+class GoogleBooksWorker:
+    async def run(self) -> None:
+        while True:
+            try:
+                await self._process_batch()
+            except Exception as e:
+                logger.exception("Unexpected error in google books worker: %s", e)
+
+            await asyncio.sleep(settings.GOOGLE_BOOKS_WORKER_DELAY)
+
+    async def _process_batch(self) -> None:
+        async with AsyncSessionLocal() as session:
+            stmt = (
+                select(Book.biblio_id, Book.isbn)
+                .where(
+                    Book.isbn.isnot(None),
+                    func.array_length(Book.isbn, 1) > 0,
+                    (Book.cover_url.is_(None)) | (Book.description.is_(None)),
+                )
+                .order_by(Book.metadata_synced_at.asc().nullsfirst())
+                .limit(settings.GOOGLE_BOOKS_SCAN_BATCH_SIZE)
+            )
+            result = await session.execute(stmt)
+            rows = result.all()
+
+            if not rows:
+                return
+
+            for biblio_id, isbns in rows:
+                isbn = pick_isbn(isbns)
+                if not isbn:
+                    continue
+
+                book_data = await google_books_client.fetch_by_isbn(isbn)
+                if not book_data:
+                    continue
+
+                update_values = {"metadata_synced_at": datetime.now(timezone.utc)}
+                if "cover_url" in book_data:
+                    update_values["cover_url"] = book_data["cover_url"]
+                if "description" in book_data:
+                    update_values["description"] = book_data["description"]
+
+                await session.execute(
+                    update(Book).where(Book.biblio_id == biblio_id).values(**update_values)
+                )
+
+                logger.info(
+                    "Enriched biblio_id=%s via ISBN %s: cover=%s description=%s",
+                    biblio_id,
+                    isbn,
+                    "yes" if "cover_url" in book_data else "no",
+                    "yes" if "description" in book_data else "no",
+                )
+
+            await session.commit()
