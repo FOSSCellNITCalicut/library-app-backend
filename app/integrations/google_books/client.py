@@ -62,13 +62,9 @@ class GoogleBooksClient:
 
         image_links = volume_info.get("imageLinks", {})
         cover_url = None
-        for key in ("extraLarge", "large", "medium", "thumbnail", "smallThumbnail"):
-            url = image_links.get(key)
-            if url:
-                cover_url = url.replace("http://", "https://")
-                if key == "thumbnail":
-                    cover_url = cover_url.replace("zoom=1", "zoom=3")
-                break
+        thumbnail_url = image_links.get("thumbnail")
+        if thumbnail_url:
+            cover_url = thumbnail_url.replace("http://", "https://")
 
         if cover_url:
             result["cover_url"] = cover_url
