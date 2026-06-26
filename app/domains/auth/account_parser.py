@@ -315,12 +315,18 @@ def _parse_checked_out_books(soup: BeautifulSoup, roll_no: str) -> list[CheckedO
 
         # Renewal counts: Koha renders a <span class="renewals"> inside
         # <td class="renew"> with text "X of Y renewals remaining".
+        # Fall back to searching the whole row in case NITC's template
+        # uses different class names or nesting.
         renewals_allowed = 0
         renewals_remaining = 0
         renew_cell = row.find("td", class_=re.compile(r"renew", re.I))
-        if renew_cell:
-            span = renew_cell.find("span", class_=re.compile(r"renewal", re.I))
-            text = (span or renew_cell).get_text(strip=True)
+        renewal_span = (
+            renew_cell.find("span", class_=re.compile(r"renewal", re.I))
+            if renew_cell else None
+        ) or row.find("span", class_=re.compile(r"renewal", re.I))
+
+        if renewal_span:
+            text = renewal_span.get_text(strip=True)
             m = re.search(r'(\d+)\s*(?:of|/)\s*(\d+)', text)
             if m:
                 renewals_remaining = int(m.group(1))
@@ -329,6 +335,12 @@ def _parse_checked_out_books(soup: BeautifulSoup, roll_no: str) -> list[CheckedO
                 m = re.search(r'(\d+)', text)
                 if m:
                     renewals_remaining = int(m.group(1))
+        elif renew_cell:
+            text = renew_cell.get_text(strip=True)
+            m = re.search(r'(\d+)\s*(?:of|/)\s*(\d+)', text)
+            if m:
+                renewals_remaining = int(m.group(1))
+                renewals_allowed = int(m.group(2))
 
         books.append(CheckedOutBook(
             biblio_id=biblio_id,
