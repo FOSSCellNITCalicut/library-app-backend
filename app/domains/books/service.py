@@ -6,6 +6,12 @@ Calls:      repository.py
 Returns validated Pydantic schema objects.
 """
 
+from datetime import date, datetime, timezone
+
+from sqlalchemy import delete
+from sqlalchemy.dialects.postgresql import insert
+
+from app.domains.books.models import Book, BookCopy
 from app.domains.books.schemas import (
     BookDetailSchema,
     BookListResponse,
@@ -31,10 +37,6 @@ MAX_PER_PAGE = 100
 ALLOWED_SORT_FIELDS = {"title", "authors", "published_year", "publisher"}
 
 def _is_item_available(item: dict) -> bool:
-    """5-condition rule from docs/api.md ("Book Availability"). Mirrors
-    AvailabilityWorker.compute_availability, kept independent here since
-    this path is live/DB-less and shouldn't import the sync worker module.
-    """
     return (
         item.get("checked_out_date") is None
         and item.get("lost_status") == 0
@@ -42,6 +44,15 @@ def _is_item_available(item: dict) -> bool:
         and item.get("not_for_loan_status") == 0
         and item.get("withdrawn") == 0
     )
+
+
+def _parse_koha_date(value) -> date | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        return None
 
 
 class BiblioNotFoundError(Exception):
@@ -129,10 +140,6 @@ class BookService:
 
 
     async def check_availability(self, biblio_id) -> BookAvailabilitySchema:
-        """Live availability check via Koha — used by the 'Check Availability'
-        button. Always hits Koha directly; never reads cached DB counts,
-        since those can be stale between sync worker passes.
-        """
         items = await self._koha_client.get_availability(biblio_id)
 
         if items is None:
@@ -141,9 +148,78 @@ class BookService:
         total_copies = len(items)
         available_copies = sum(1 for item in items if _is_item_available(item))
 
+        await self._sync_db_copies(biblio_id, items)
+
         return BookAvailabilitySchema(
             biblio_id=biblio_id,
             available=available_copies > 0,
             available_copies=available_copies,
             total_copies=total_copies,
         )
+
+    async def _sync_db_copies(self, biblio_id: int, koha_items: list[dict]) -> None:
+        db = self._repository.db
+        now = datetime.now(timezone.utc)
+
+        db_copies = await self._repository.get_copies_by_biblio_id(biblio_id)
+        db_copy_map = {c.item_id: c for c in db_copies}
+
+        koha_item_ids: set[int] = set()
+        has_changes = False
+
+        for item in koha_items:
+            item_id = item.get("item_id")
+            item_biblio_id = item.get("biblio_id")
+            if item_id is None or item_biblio_id is None:
+                continue
+
+            koha_item_ids.add(item_id)
+            branch = item.get("home_library_id")
+            callnumber = item.get("callnumber")
+            status = "Available" if _is_item_available(item) else "Not Available"
+
+            db_copy = db_copy_map.get(item_id)
+            if (
+                db_copy is not None
+                and db_copy.branch == branch
+                and db_copy.callnumber == callnumber
+                and db_copy.status == status
+            ):
+                continue
+
+            has_changes = True
+
+            book_stmt = insert(Book).values(biblio_id=biblio_id, title="Unknown Title")
+            book_stmt = book_stmt.on_conflict_do_nothing()
+            await db.execute(book_stmt)
+
+            copy_stmt = insert(BookCopy).values(
+                item_id=item_id,
+                biblio_id=biblio_id,
+                branch=branch,
+                callnumber=callnumber,
+                acquisition_date=_parse_koha_date(item.get("acquisition_date")),
+                status=status,
+                last_seen_at=now,
+            )
+            copy_stmt = copy_stmt.on_conflict_do_update(
+                index_elements=[BookCopy.item_id],
+                set_={
+                    "branch": copy_stmt.excluded.branch,
+                    "callnumber": copy_stmt.excluded.callnumber,
+                    "acquisition_date": copy_stmt.excluded.acquisition_date,
+                    "status": copy_stmt.excluded.status,
+                    "last_seen_at": now,
+                },
+            )
+            await db.execute(copy_stmt)
+
+        for db_copy in db_copies:
+            if db_copy.item_id not in koha_item_ids:
+                has_changes = True
+                await db.execute(
+                    delete(BookCopy).where(BookCopy.item_id == db_copy.item_id)
+                )
+
+        if has_changes:
+            await db.commit()
