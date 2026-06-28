@@ -67,7 +67,7 @@ class BookService:
 
         return BookListResponse(items=items, page=1, per_page=len(items) or 1, total=len(items))
 
-    async def search_books(self, query, page=1, per_page=20) -> BookListResponse:
+    async def search_books(self, query, page=1, per_page=20, categories=None) -> BookListResponse:
         if not query or not query.strip():
             raise ServiceValidationError("Search query must not be empty")
 
@@ -80,12 +80,21 @@ class BookService:
 
         offset = (page - 1) * per_page
         results, total_count = await self._repository.search_books(
-            query=query, offset=offset, limit=per_page,
+            query=query, offset=offset, limit=per_page, categories=categories,
         )
 
         items = self._to_summary(results)
 
-        return BookListResponse(items=items, page=page, per_page=per_page, total=total_count)
+        # Get available categories for the search query
+        available_categories = await self._repository.get_available_categories(query)
+
+        return BookListResponse(
+            items=items,
+            page=page,
+            per_page=per_page,
+            total=total_count,
+            available_categories=available_categories
+        )
 
     async def browse_books(self, page=1, per_page=20, sort_by="title", sort_order="asc") -> BookListResponse:
         if page < 1:

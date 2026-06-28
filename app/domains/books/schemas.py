@@ -91,6 +91,10 @@ class BookListResponse(BaseModel):
     page: int = Field(ge=1)
     per_page: int = Field(ge=1)
     total: int = Field(ge=0, description="Total number of matching books")
+    available_categories: list[str] = Field(
+        default_factory=list,
+        description="Available categories for filtering (only populated for search results)"
+    )
 
     @computed_field
     @property

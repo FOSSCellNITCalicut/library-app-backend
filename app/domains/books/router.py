@@ -81,7 +81,7 @@ async def browse_books(
     },
 )
 async def search_books(
-    service: BookService = Depends(get_book_service), 
+    service: BookService = Depends(get_book_service),
     q: str = Query(
         ...,
         min_length=1,
@@ -99,17 +99,22 @@ async def search_books(
         le=100,
         description="Number of books per page",
     ),
-    
+    category: list[str] = Query(
+        default=None,
+        description="Filter by category (can specify multiple for OR filtering)",
+    ),
+
 ):
     try:
         return await service.search_books(
-            query=q,                                  
+            query=q,
             # service expects query not q
             page=page,
             per_page=per_page,
+            categories=category,
         )
 
-    except ServiceValidationError as e:              
+    except ServiceValidationError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
