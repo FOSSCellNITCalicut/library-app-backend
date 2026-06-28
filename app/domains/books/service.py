@@ -11,15 +11,14 @@ from datetime import date, datetime, timezone
 from sqlalchemy import delete, update
 from sqlalchemy.dialects.postgresql import insert
 
+from app.core import cache as _cache
 from app.domains.books.models import Book, BookCopy
 from app.domains.books.schemas import (
+    BookAvailabilitySchema,
     BookDetailSchema,
     BookListResponse,
     BookSummarySchema,
 )
-
-from app.domains.books.schemas import BookAvailabilitySchema
-
 from app.integrations.koha.client import koha_client
 
 
@@ -67,7 +66,6 @@ class BookService:
     def __init__(self, repository):
         self._repository = repository
         self._koha_client = koha_client
-        self._cache = None # TODO: Implement caching layer for book details
 
     async def search_by_isbn(self, isbn) -> BookListResponse:
         if not isbn or not isbn.strip():
@@ -128,11 +126,24 @@ class BookService:
         return BookListResponse(items=items, page=page, per_page=per_page, total=total_count)
 
     async def get_book_details(self, biblio_id) -> BookDetailSchema:
+        cached = await _cache.get_json(_cache.book_detail_key(biblio_id))
+        if cached is not None:
+            try:
+                return BookDetailSchema.model_validate(cached)
+            except Exception:
+                pass  # corrupt cache entry -- fall through to DB
+
         book = await self._repository.get_book_by_id(biblio_id)
         if book is None:
             raise BookNotFoundError(biblio_id)
 
-        return BookDetailSchema.model_validate(book)
+        detail = BookDetailSchema.model_validate(book)
+        await _cache.set_json(
+            _cache.book_detail_key(biblio_id),
+            detail.model_dump(mode="json"),
+            _cache.BOOK_DETAIL_TTL,
+        )
+        return detail
 
     def _to_summary(self, result):
         return [BookSummarySchema.model_validate(r) for r in result]
@@ -149,6 +160,14 @@ class BookService:
 
 
     async def check_availability(self, biblio_id) -> BookAvailabilitySchema:
+        """Live availability check via Koha, cached for 120 seconds."""
+        cached = await _cache.get_json(_cache.book_availability_key(biblio_id))
+        if cached is not None:
+            try:
+                return BookAvailabilitySchema.model_validate(cached)
+            except Exception:
+                pass  # corrupt cache entry -- fall through to Koha
+
         items = await self._koha_client.get_availability(biblio_id)
 
         if items is None:
@@ -159,12 +178,18 @@ class BookService:
 
         await self._sync_db_copies(biblio_id, items)
 
-        return BookAvailabilitySchema(
+        result = BookAvailabilitySchema(
             biblio_id=biblio_id,
             available=available_copies > 0,
             available_copies=available_copies,
             total_copies=total_copies,
         )
+        await _cache.set_json(
+            _cache.book_availability_key(biblio_id),
+            result.model_dump(mode="json"),
+            _cache.BOOK_AVAILABILITY_TTL,
+        )
+        return result
 
     async def _sync_db_copies(self, biblio_id: int, koha_items: list[dict]) -> None:
         db = self._repository.db
