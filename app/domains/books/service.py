@@ -8,7 +8,7 @@ Returns validated Pydantic schema objects.
 
 from datetime import date, datetime, timezone
 
-from sqlalchemy import delete
+from sqlalchemy import delete, update
 from sqlalchemy.dialects.postgresql import insert
 
 from app.domains.books.models import Book, BookCopy
@@ -165,7 +165,6 @@ class BookService:
         db_copy_map = {c.item_id: c for c in db_copies}
 
         koha_item_ids: set[int] = set()
-        has_changes = False
 
         for item in koha_items:
             item_id = item.get("item_id")
@@ -186,8 +185,6 @@ class BookService:
                 and db_copy.status == status
             ):
                 continue
-
-            has_changes = True
 
             book_stmt = insert(Book).values(biblio_id=biblio_id, title="Unknown Title")
             book_stmt = book_stmt.on_conflict_do_nothing()
@@ -216,10 +213,14 @@ class BookService:
 
         for db_copy in db_copies:
             if db_copy.item_id not in koha_item_ids:
-                has_changes = True
                 await db.execute(
                     delete(BookCopy).where(BookCopy.item_id == db_copy.item_id)
                 )
 
-        if has_changes:
-            await db.commit()
+        await db.execute(
+            update(Book)
+            .where(Book.biblio_id == biblio_id)
+            .values(availability_synced_at=now)
+        )
+
+        await db.commit()
