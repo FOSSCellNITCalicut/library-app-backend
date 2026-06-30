@@ -1,0 +1,187 @@
+{
+  "version": "29-06-2026-v1",
+  "programmes": {
+    "btech": {
+      "name": "B.Tech",
+      "branches": {
+        "cse": {
+          "name": "Computer Science and Engineering",
+          "courses": {
+            "CS1001E": "Mathematics I",
+            "MS1001E": "Professional Communication",
+            "CS1002E": "Computer Programming",
+            "CS1003E": "Introduction to Computing Science",
+            "CS1004E": "Discrete Structures I",
+            "CS1091E": "Programming Laboratory",
+            "MA1012E": "Mathematics II",
+            "PH1001E": "Physics of Materials",
+            "BT1001E": "Biology for Engineers",
+            "CS1011E": "Program Design",
+            "CS1012E": "Logic Design",
+            "CS1013E": "Discrete Structures II",
+            "CS1092E": "Program Design Laboratory"
+          }
+        },
+        "ece": {
+          "name": "Electronics and Communication Engineering",
+          "courses": {}
+        },
+        "civil": {
+          "name": "Civil Engineering",
+          "courses": {}
+        },
+        "mech": {
+          "name": "Mechanical Engineering",
+          "courses": {}
+        },
+        "biotech": {
+          "name": "Biotechnology",
+          "courses": {}
+        },
+        "chemical": {
+          "name": "Chemical Engineering",
+          "courses": {}
+        },
+        "eee": {
+          "name": "Electrical and Electronics Engineering",
+          "courses": {}
+        },
+        "meta": {
+          "name": "Metallurgical and Materials Engineering",
+          "courses": {}
+        },
+        "production": {
+          "name": "Production Engineering",
+          "courses": {}
+        },
+        "architecture": {
+          "name": "Architecture",
+          "courses": {}
+        },
+        "planning": {
+          "name": "Planning",
+          "courses": {}
+        }
+      }
+    },
+    "mtech": {
+      "name": "M.Tech",
+      "branches": {
+        "cse": {
+          "name": "Computer Science and Engineering",
+          "courses": {}
+        },
+        "ece": {
+          "name": "Electronics and Communication Engineering",
+          "courses": {}
+        },
+        "structural": {
+          "name": "Structural Engineering",
+          "courses": {}
+        },
+        "transportation": {
+          "name": "Transportation Engineering",
+          "courses": {}
+        },
+        "geotechnical": {
+          "name": "Geotechnical Engineering",
+          "courses": {}
+        },
+        "environmental": {
+          "name": "Environmental Engineering",
+          "courses": {}
+        },
+        "thermal": {
+          "name": "Thermal Engineering",
+          "courses": {}
+        },
+        "design": {
+          "name": "Design Engineering",
+          "courses": {}
+        },
+        "manufacturing": {
+          "name": "Manufacturing Engineering",
+          "courses": {}
+        },
+        "power": {
+          "name": "Power Systems Engineering",
+          "courses": {}
+        },
+        "control": {
+          "name": "Control Systems Engineering",
+          "courses": {}
+        },
+        "signal": {
+          "name": "Signal Processing Engineering",
+          "courses": {}
+        },
+        "vlsi": {
+          "name": "VLSI Design",
+          "courses": {}
+        },
+        "biotech": {
+          "name": "Biotechnology",
+          "courses": {}
+        },
+        "chemical": {
+          "name": "Chemical Engineering",
+          "courses": {}
+        },
+        "material": {
+          "name": "Materials Science and Engineering",
+          "courses": {}
+        }
+      }
+    },
+    "msc": {
+      "name": "M.Sc.",
+      "branches": {
+        "physics": {
+          "name": "Physics",
+          "courses": {}
+        },
+        "chemistry": {
+          "name": "Chemistry",
+          "courses": {}
+        },
+        "mathematics": {
+          "name": "Mathematics",
+          "courses": {}
+        }
+      }
+    },
+    "phd": {
+      "name": "Ph.D.",
+      "branches": {
+        "cse": {
+          "name": "Computer Science and Engineering",
+          "courses": {}
+        },
+        "ece": {
+          "name": "Electronics and Communication Engineering",
+          "courses": {}
+        },
+        "civil": {
+          "name": "Civil Engineering",
+          "courses": {}
+        },
+        "mech": {
+          "name": "Mechanical Engineering",
+          "courses": {}
+        },
+        "physics": {
+          "name": "Physics",
+          "courses": {}
+        },
+        "chemistry": {
+          "name": "Chemistry",
+          "courses": {}
+        },
+        "mathematics": {
+          "name": "Mathematics",
+          "courses": {}
+        }
+      }
+    }
+  }
+}
