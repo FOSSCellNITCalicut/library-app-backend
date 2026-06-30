@@ -4,7 +4,7 @@ from sqlalchemy import any_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.domains.books.models import Book
+from app.domains.books.models import Book, BookCopy
 # schema validations are done in service
 
 # Module-level sort map (according to service.py)
@@ -133,4 +133,8 @@ class BooksRepository:
         
         rows = (await self.db.execute(stmt)).mappings().all()
         return list(rows)
+
+    async def get_copies_by_biblio_id(self, biblio_id: int) -> list[BookCopy]:
+        stmt = select(BookCopy).where(BookCopy.biblio_id == biblio_id)
+        return list((await self.db.execute(stmt)).scalars().all())
 
