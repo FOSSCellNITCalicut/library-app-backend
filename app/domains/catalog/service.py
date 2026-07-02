@@ -31,7 +31,14 @@ class CatalogService:
         # 2. Fetch book details sequentially (shared AsyncSession isn't safe for concurrent calls)
         books = []
         for biblio_id, search_string in search_string_by_biblio_id.items():
-            book = await self.book_service.get_book_details(biblio_id=biblio_id)
+            try:
+                book = await self.book_service.get_book_details(biblio_id=biblio_id)
+            except BookNotFoundError:
+                logger.warning("Book %s for course %s not found, skipping", biblio_id, course_id)
+                continue
+            except Exception:
+                logger.exception("Error fetching book %s for course %s, skipping", biblio_id, course_id)
+                continue
             book_dict = book.model_dump() if hasattr(book, "model_dump") else dict(book)
             books.append(
                 CatalogBookDetailSchema(
