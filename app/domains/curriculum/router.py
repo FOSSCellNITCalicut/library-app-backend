@@ -26,5 +26,5 @@ async def curriculum():
     data = get_curriculum()
     return CurriculumResponse(
         version=data.get("version", "unknown"),
-        programmes=data.get("programmes", {}),
+        Programmes=data.get("Programmes", {}),
     )
