@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 from sqlalchemy import select
@@ -28,22 +29,23 @@ class CatalogService:
 
         search_string_by_biblio_id = {row.biblio_id: row.search_string for row in rows}
 
-        # 2. Fetch book details sequentially (shared AsyncSession isn't safe for concurrent calls)
+        # 2. Fetch all book details concurrently
+        biblio_ids = list(search_string_by_biblio_id.keys())
+        tasks = [self.book_service.get_book_details(biblio_id=b) for b in biblio_ids]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
         books = []
-        for biblio_id, search_string in search_string_by_biblio_id.items():
-            try:
-                book = await self.book_service.get_book_details(biblio_id=biblio_id)
-            except BookNotFoundError:
+        for biblio_id, result in zip(biblio_ids, results):
+            if isinstance(result, BookNotFoundError):
                 logger.warning("Book %s for course %s not found, skipping", biblio_id, course_id)
                 continue
-            except Exception:
+            if isinstance(result, Exception):
                 logger.exception("Error fetching book %s for course %s, skipping", biblio_id, course_id)
                 continue
-            book_dict = book.model_dump() if hasattr(book, "model_dump") else dict(book)
             books.append(
                 CatalogBookDetailSchema(
-                    **book_dict,
-                    search_string=search_string,
+                    **result.model_dump(),
+                    search_string=search_string_by_biblio_id[biblio_id],
                 )
             )
 
