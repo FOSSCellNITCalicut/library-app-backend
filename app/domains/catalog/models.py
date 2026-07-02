@@ -18,7 +18,7 @@ class CatalogBook(Base):
         primary_key=True,
     )
     
-    search_string: Mapped[str] = mapped_column(
+    search_string: Mapped[str | None] = mapped_column(
           Text, 
           nullable=True,
     )
