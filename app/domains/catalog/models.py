@@ -1,4 +1,4 @@
-from sqlalchemy import BigInteger, ForeignKey, Index, String
+from sqlalchemy import BigInteger, ForeignKey, Index, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
@@ -17,7 +17,13 @@ class CatalogBook(Base):
         ForeignKey("books.biblio_id", ondelete="CASCADE"),
         primary_key=True,
     )
+    
+    search_string: Mapped[str] = mapped_column(
+          Text, 
+          nullable=True,
+    )
 
     __table_args__ = (
         Index("ix_catalog_books_biblio_id", "biblio_id"),
     )
+
