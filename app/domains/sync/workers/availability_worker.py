@@ -5,6 +5,7 @@ from datetime import date, datetime, timezone
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import cache as _cache
 from app.core.config import settings
 from app.db.database import AsyncSessionLocal
 from app.domains.books.models import Book, BookCopy
@@ -128,6 +129,9 @@ class AvailabilityWorker:
         )
 
         await session.execute(copy_stmt)
+
+        # Invalidate the Redis availability cache so stale data isn't served
+        await _cache.delete(_cache.book_availability_key(biblio_id))
 
         # If we inserted a new biblio_id, enqueue a metadata job with elevated priority to fetch the title and other details
         if inserted_biblio_id is not None:
