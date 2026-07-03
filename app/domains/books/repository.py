@@ -25,6 +25,7 @@ class BooksRepository:
         query: str,
         offset: int, # service passes offset and limit
         limit: int,
+        categories: list[str] | None = None,
     ) -> tuple[list[dict], int]:
         """Full-text search over books.search_vector, ranked by relevance.
 
@@ -55,10 +56,32 @@ class BooksRepository:
             .limit(limit)
         )
 
+        # Apply category filter if provided (OR condition)
+        if categories:
+            from sqlalchemy import or_
+            category_conditions = [Book.categories.any(cat) for cat in categories]
+            stmt = stmt.where(or_(*category_conditions))
+
         rows = (await self.db.execute(stmt)).mappings().all()
         total = rows[0]["total_count"] if rows else 0
         # service will do the validation
         return (list(rows), total)
+
+    async def get_available_categories(self, query: str) -> list[str]:
+        """Get distinct categories for books matching the search query."""
+        ts_query = func.plainto_tsquery("english", query)
+
+        stmt = (
+            select(func.unnest(Book.categories).label("category"))
+            .where(Book.search_vector.op("@@")(ts_query))
+            .where(Book.categories.isnot(None))
+            .where(func.array_length(Book.categories, 1) > 0)
+            .distinct()
+            .order_by("category")
+        )
+
+        rows = (await self.db.execute(stmt)).all()
+        return [row[0] for row in rows if row[0]]
 
     async def browse_books(
         self,
