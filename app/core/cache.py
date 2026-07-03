@@ -34,8 +34,12 @@ def book_availability_key(biblio_id: int) -> str:
     return f"books:availability:{biblio_id}"
 
 
-async def init(url: str) -> None:
+async def init(url: str, enabled: bool = True) -> None:
     global _client
+    if not enabled:
+        logger.info("Redis caching disabled via CACHE_ENABLED=False")
+        _client = None
+        return
     try:
         _client = aioredis.from_url(url, decode_responses=True)
         await _client.ping()

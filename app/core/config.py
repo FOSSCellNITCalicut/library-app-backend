@@ -55,6 +55,7 @@ class Settings(BaseSettings):
     DATABASE_URL: str
 
     # Redis
+    CACHE_ENABLED: bool = True  # Set to False to disable Redis caching entirely
     REDIS_URL: str = "redis://localhost:6379/0"
 
     model_config = SettingsConfigDict(

@@ -26,7 +26,7 @@ tasks: list = []
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await _cache.init(settings.REDIS_URL)
+    await _cache.init(settings.REDIS_URL, enabled=settings.CACHE_ENABLED)
 
     if settings.SEED_DATA:
         availability_client = KohaClient()
