@@ -21,6 +21,17 @@ services:
       timeout: 5s
       retries: 10
 
+  redis:
+    container_name: redis
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   api:
     container_name: api
     
@@ -39,6 +50,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_started
     
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", '--reload']
     

@@ -5,8 +5,9 @@ from contextlib import asynccontextmanager
 import httpx
 from fastapi import FastAPI
 
-from app.core.logging import configure_logging 
+from app.core.logging import configure_logging
 from app.core.config import settings
+from app.core import cache as _cache
 from app.integrations.koha.client import KohaClient
 from app.domains.sync.workers.availability_worker import AvailabilityWorker
 from app.domains.sync.workers.metadata_cleanup_worker import MetadataCleanupWorker
@@ -25,6 +26,7 @@ tasks: list = []
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    await _cache.init(settings.REDIS_URL, enabled=settings.CACHE_ENABLED)
 
     if settings.SEED_DATA:
         availability_client = KohaClient()
@@ -88,6 +90,7 @@ async def lifespan(app: FastAPI):
                 logger.warning("Error closing Koha client: %s", e)
 
         logger.info("Workers Stopped")
+        await _cache.close()
 
 
 app = FastAPI(

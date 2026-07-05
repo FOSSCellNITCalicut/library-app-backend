@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import cache as _cache
 from app.core.config import settings
 from app.db.database import AsyncSessionLocal
 from app.domains.books.models import Book
@@ -75,6 +76,7 @@ class MetadataWorker:
             book.published_year = metadata["year"]
 
         book.metadata_synced_at = datetime.now(timezone.utc)
+        await _cache.delete(_cache.book_detail_key(biblio_id))
         return True
 
     async def _record_failure(
