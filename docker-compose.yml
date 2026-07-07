@@ -1,6 +1,6 @@
 services:
-  db:
-    container_name: db
+  library-db:
+    container_name: library-db
     
     image: postgres:16-alpine
     
@@ -21,8 +21,8 @@ services:
       timeout: 5s
       retries: 10
 
-  redis:
-    container_name: redis
+  library-redis:
+    container_name: library-redis
     image: redis:7-alpine
     ports:
       - "6379:6379"
@@ -32,8 +32,8 @@ services:
       timeout: 5s
       retries: 10
 
-  api:
-    container_name: api
+  library-worker:
+    container_name: library-worker
     
     build:
       context: .
@@ -45,12 +45,12 @@ services:
     env_file: .env
 
     environment:
-      - DATABASE_URL=postgresql+asyncpg://postgres:nitc@db:5432/library_app
+      - DATABASE_URL=postgresql+asyncpg://postgres:nitc@library-db:5432/library_app
     
     depends_on:
-      db:
+      library-db:
         condition: service_healthy
-      redis:
+      library-redis:
         condition: service_started
     
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", '--reload']
