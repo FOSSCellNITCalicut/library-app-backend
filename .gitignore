@@ -14,3 +14,7 @@ __pycache__/
 
 # Logs
 logs/
+
+# Seed script outputs (CSVs + error lists — data artifacts, not code)
+seed_output/
+seed_output_*/
