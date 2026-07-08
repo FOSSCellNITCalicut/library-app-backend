@@ -1,4 +1,5 @@
 import logging
+from datetime import date, datetime, timezone
 
 import httpx
 
@@ -7,9 +8,40 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+DAILY_QUOTA_LIMIT = 1000
+
 
 class RateLimitedError(Exception):
     """Raised when Google Books API returns 429."""
+
+
+class QuotaExhaustedError(Exception):
+    """Raised when daily Google Books API quota is exhausted."""
+
+
+class DailyQuotaTracker:
+    def __init__(self, limit: int = DAILY_QUOTA_LIMIT):
+        self._limit = limit
+        self._count = 0
+        self._date = date.today()
+
+    def _reset_if_new_day(self) -> None:
+        today = date.today()
+        if today != self._date:
+            self._count = 0
+            self._date = today
+
+    def check(self) -> None:
+        self._reset_if_new_day()
+        if self._count >= self._limit:
+            raise QuotaExhaustedError()
+
+    def increment(self) -> None:
+        self._reset_if_new_day()
+        self._count += 1
+
+
+_quota_tracker = DailyQuotaTracker()
 
 
 class GoogleBooksClient:
@@ -28,11 +60,15 @@ class GoogleBooksClient:
             logger.warning("Invalid ISBN (non-digit after cleanup): %s", isbn)
             return None
 
+        _quota_tracker.check()
+
         try:
             response = await self.client.get(
                 "/volumes",
                 params={"q": f"isbn:{isbn_clean}", "key": self.api_key},
             )
+
+            _quota_tracker.increment()
 
             if response.status_code == 429:
                 logger.warning("Google Books API rate limited (429): %s", response.text[:300])

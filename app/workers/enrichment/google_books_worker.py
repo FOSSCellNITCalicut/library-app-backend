@@ -1,13 +1,18 @@
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select, update
 
 from app.core.config import settings
 from app.db.database import AsyncSessionLocal
 from app.domains.books.models import Book
-from app.integrations.google_books.client import RateLimitedError, google_books_client
+from app.integrations.google_books.client import (
+    QuotaExhaustedError,
+    RateLimitedError,
+    google_books_client,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -41,6 +46,18 @@ class GoogleBooksWorker:
                     await asyncio.sleep(backoff)
                     continue
                 backoff = 1
+
+            except QuotaExhaustedError:
+                pacific = ZoneInfo("America/Los_Angeles")
+                now = datetime.now(pacific)
+                midnight = datetime(now.year, now.month, now.day, tzinfo=pacific) + timedelta(days=1)
+                sleep_seconds = (midnight - now).total_seconds()
+                logger.info(
+                    "Daily Google Books quota exhausted. Sleeping for %.0fs until midnight UTC",
+                    sleep_seconds,
+                )
+                await asyncio.sleep(sleep_seconds)
+                continue
 
             except Exception as e:
                 logger.exception("Unexpected error in google books worker: %s", e)
