@@ -10,6 +10,7 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 DAILY_QUOTA_LIMIT = 1000
+MAX_KEY_CONSECUTIVE_429 = 5
 
 
 class RateLimitedError(Exception):
@@ -32,11 +33,15 @@ class DailyQuotaTracker:
         self._limit = limit
         self._count = 0
         self._date = datetime.now(PACIFIC_TZ).date()
+        self._consecutive_429 = 0
+        self._disabled = False
 
     def _reset_if_new_day(self) -> None:
         today = datetime.now(PACIFIC_TZ).date()
         if today != self._date:
             self._count = 0
+            self._consecutive_429 = 0
+            self._disabled = False
             self._date = today
 
     @property
@@ -52,6 +57,21 @@ class DailyQuotaTracker:
     def increment(self) -> None:
         self._reset_if_new_day()
         self._count += 1
+
+    def mark_429(self) -> None:
+        self._reset_if_new_day()
+        self._consecutive_429 += 1
+        if self._consecutive_429 >= MAX_KEY_CONSECUTIVE_429:
+            self._disabled = True
+
+    def mark_success(self) -> None:
+        self._reset_if_new_day()
+        self._consecutive_429 = 0
+
+    @property
+    def is_disabled(self) -> bool:
+        self._reset_if_new_day()
+        return self._disabled
 
 
 class GoogleBooksClient:
@@ -82,6 +102,14 @@ class GoogleBooksClient:
         self._key_trackers.sort(key=lambda kt: kt[1].count)
 
         for key, tracker in self._key_trackers:
+            if tracker.is_disabled:
+                logger.debug(
+                    "Key %s... disabled for the day after %d consecutive 429s, skipping",
+                    key[:8],
+                    MAX_KEY_CONSECUTIVE_429,
+                )
+                continue
+
             try:
                 tracker.check()
             except QuotaExhaustedError:
@@ -96,12 +124,22 @@ class GoogleBooksClient:
                 tracker.increment()
 
                 if response.status_code == 429:
-                    logger.warning(
-                        "Key %s... rate limited (429), trying next key",
-                        key[:8],
-                    )
+                    was_disabled = tracker.is_disabled
+                    tracker.mark_429()
+                    if tracker.is_disabled and not was_disabled:
+                        logger.warning(
+                            "Key %s... disabled for the day after %d consecutive 429s",
+                            key[:8],
+                            MAX_KEY_CONSECUTIVE_429,
+                        )
+                    else:
+                        logger.warning(
+                            "Key %s... rate limited (429), trying next key",
+                            key[:8],
+                        )
                     continue
 
+                tracker.mark_success()
                 response.raise_for_status()
 
             except httpx.HTTPStatusError as e:
@@ -138,8 +176,11 @@ class GoogleBooksClient:
 
             return result if result else None
 
-        all_exhausted = all(kt[1].count >= DAILY_QUOTA_LIMIT for kt in self._key_trackers)
-        if all_exhausted:
+        all_unavailable = all(
+            kt[1].is_disabled or kt[1].count >= DAILY_QUOTA_LIMIT
+            for kt in self._key_trackers
+        )
+        if all_unavailable:
             raise QuotaExhaustedError()
         raise RateLimitedError()
 
