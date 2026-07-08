@@ -35,6 +35,7 @@ class Book(Base):
     lib_copies: Mapped[int] = mapped_column(Integer, default=0)
     mat_copies: Mapped[int] = mapped_column(Integer, default=0)
     metadata_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    google_try_count: Mapped[int] = mapped_column(Integer, default=0)
     availability_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
