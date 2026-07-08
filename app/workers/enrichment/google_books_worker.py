@@ -74,6 +74,7 @@ class GoogleBooksWorker:
                 .where(
                     Book.isbn.isnot(None),
                     func.array_length(Book.isbn, 1) > 0,
+                    Book.google_try_count < 2,
                     (Book.cover_url.is_(None)) | (Book.description.is_(None)),
                 )
                 .order_by(Book.metadata_synced_at.asc().nullsfirst())
@@ -101,7 +102,11 @@ class GoogleBooksWorker:
                     rate_limited = True
                     break
 
-                update_values = {"metadata_synced_at": datetime.now(timezone.utc)}
+                now = datetime.now(timezone.utc)
+                update_values = {
+                    "metadata_synced_at": now,
+                    "google_try_count": Book.google_try_count + 1,
+                }
                 if book_data:
                     if "cover_url" in book_data:
                         update_values["cover_url"] = book_data["cover_url"]
@@ -114,6 +119,12 @@ class GoogleBooksWorker:
                         isbn,
                         "yes" if "cover_url" in book_data else "no",
                         "yes" if "description" in book_data else "no",
+                    )
+                else:
+                    logger.info(
+                        "No data from Google for biblio_id=%s via ISBN %s",
+                        biblio_id,
+                        isbn,
                     )
 
                 await session.execute(

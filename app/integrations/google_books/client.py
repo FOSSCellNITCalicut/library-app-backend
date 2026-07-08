@@ -1,5 +1,6 @@
 import logging
 from datetime import date, datetime, timezone
+from zoneinfo import ZoneInfo
 
 import httpx
 
@@ -19,14 +20,17 @@ class QuotaExhaustedError(Exception):
     """Raised when daily Google Books API quota is exhausted."""
 
 
+PACIFIC_TZ = ZoneInfo("America/Los_Angeles")
+
+
 class DailyQuotaTracker:
     def __init__(self, limit: int = DAILY_QUOTA_LIMIT):
         self._limit = limit
         self._count = 0
-        self._date = date.today()
+        self._date = datetime.now(PACIFIC_TZ).date()
 
     def _reset_if_new_day(self) -> None:
-        today = date.today()
+        today = datetime.now(PACIFIC_TZ).date()
         if today != self._date:
             self._count = 0
             self._date = today
