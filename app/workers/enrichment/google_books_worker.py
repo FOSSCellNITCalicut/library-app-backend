@@ -137,18 +137,32 @@ class GoogleBooksWorker:
                     "metadata_synced_at": now,
                     "google_try_count": Book.google_try_count + 1,
                 }
-                if book_data:
-                    if "cover_url" in book_data:
-                        update_values["cover_url"] = book_data["cover_url"]
-                    if "description" in book_data:
-                        update_values["description"] = book_data["description"]
+                cover = "cover_url" in book_data if book_data else False
+                desc = "description" in book_data if book_data else False
+                if cover:
+                    update_values["cover_url"] = book_data["cover_url"]
+                if desc:
+                    update_values["description"] = book_data["description"]
 
+                result = await session.execute(
+                    update(Book).where(Book.biblio_id == biblio_id).values(**update_values)
+                )
+                await session.commit()
+
+                if result.rowcount == 0:
+                    logger.warning(
+                        "Enrichment update matched 0 rows for biblio_id=%s (ISBN %s) "
+                        "- possible concurrent deletion; skipping",
+                        biblio_id,
+                        isbn,
+                    )
+                elif book_data:
                     logger.info(
                         "Enriched biblio_id=%s via ISBN %s: cover=%s description=%s",
                         biblio_id,
                         isbn,
-                        "yes" if "cover_url" in book_data else "no",
-                        "yes" if "description" in book_data else "no",
+                        "yes" if cover else "no",
+                        "yes" if desc else "no",
                     )
                 else:
                     logger.info(
@@ -156,10 +170,5 @@ class GoogleBooksWorker:
                         biblio_id,
                         isbn,
                     )
-
-                await session.execute(
-                    update(Book).where(Book.biblio_id == biblio_id).values(**update_values)
-                )
-                await session.commit()
 
         return rate_limited
