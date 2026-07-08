@@ -9,6 +9,7 @@ from app.core.config import settings
 from app.db.database import AsyncSessionLocal
 from app.domains.books.models import Book
 from app.integrations.google_books.client import (
+    GoogleBooksFetchError,
     QuotaExhaustedError,
     RateLimitedError,
     google_books_client,
@@ -121,6 +122,14 @@ class GoogleBooksWorker:
                 except RateLimitedError:
                     rate_limited = True
                     break
+                except GoogleBooksFetchError as e:
+                    logger.warning(
+                        "Transient Google Books error for biblio_id=%s ISBN %s: %s",
+                        biblio_id,
+                        isbn,
+                        e,
+                    )
+                    continue
 
                 now = datetime.now(timezone.utc)
                 update_values = {
