@@ -115,6 +115,7 @@ class GoogleBooksWorker:
                         .where(Book.biblio_id == biblio_id)
                         .values(metadata_synced_at=datetime.now(timezone.utc))
                     )
+                    await session.commit()
                     continue
 
                 try:
@@ -159,7 +160,6 @@ class GoogleBooksWorker:
                 await session.execute(
                     update(Book).where(Book.biblio_id == biblio_id).values(**update_values)
                 )
-
-            await session.commit()
+                await session.commit()
 
         return rate_limited
