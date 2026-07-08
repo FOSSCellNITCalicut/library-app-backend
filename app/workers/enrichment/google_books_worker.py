@@ -33,30 +33,50 @@ def pick_isbn(isbns: list[str]) -> str | None:
     return cleaned[0]
 
 
+MAX_CONSECUTIVE_RATE_LIMITED = 5
+
+
 class GoogleBooksWorker:
+    async def _sleep_until_midnight_pt(self) -> None:
+        pacific = ZoneInfo("America/Los_Angeles")
+        now = datetime.now(pacific)
+        midnight = datetime(now.year, now.month, now.day, tzinfo=pacific) + timedelta(days=1)
+        sleep_seconds = (midnight - now).total_seconds()
+        logger.info(
+            "Daily Google Books quota exhausted. Sleeping for %.0fs until midnight PT",
+            sleep_seconds,
+        )
+        await asyncio.sleep(sleep_seconds)
+
     async def run(self) -> None:
         backoff = 1
+        consecutive_rate_limited = 0
 
         while True:
             try:
                 rate_limited = await self._process_batch()
                 if rate_limited:
+                    consecutive_rate_limited += 1
+                    if consecutive_rate_limited >= MAX_CONSECUTIVE_RATE_LIMITED:
+                        logger.warning(
+                            "%d consecutive rate limits, treating as quota exhausted",
+                            consecutive_rate_limited,
+                        )
+                        await self._sleep_until_midnight_pt()
+                        consecutive_rate_limited = 0
+                        backoff = 1
+                        continue
+
                     backoff = min(backoff * 2, MAX_BACKOFF)
                     logger.warning("Rate limited, backing off for %ss", backoff)
                     await asyncio.sleep(backoff)
                     continue
+
                 backoff = 1
+                consecutive_rate_limited = 0
 
             except QuotaExhaustedError:
-                pacific = ZoneInfo("America/Los_Angeles")
-                now = datetime.now(pacific)
-                midnight = datetime(now.year, now.month, now.day, tzinfo=pacific) + timedelta(days=1)
-                sleep_seconds = (midnight - now).total_seconds()
-                logger.info(
-                    "Daily Google Books quota exhausted. Sleeping for %.0fs until midnight UTC",
-                    sleep_seconds,
-                )
-                await asyncio.sleep(sleep_seconds)
+                await self._sleep_until_midnight_pt()
                 continue
 
             except Exception as e:
