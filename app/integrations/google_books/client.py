@@ -23,9 +23,8 @@ class GoogleBooksClient:
         await self.client.aclose()
 
     async def fetch_by_isbn(self, isbn: str) -> dict | None:
-        # replace special character if present in isbn
         isbn_clean = isbn.replace("-", "").replace(" ", "")
-        if not isbn_clean.isdigit():
+        if not isbn_clean.replace("x", "").replace("X", "").isdigit():
             logger.warning("Invalid ISBN (non-digit after cleanup): %s", isbn)
             return None
 

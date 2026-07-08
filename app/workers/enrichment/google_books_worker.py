@@ -15,10 +15,13 @@ logger = logging.getLogger(__name__)
 MAX_BACKOFF = 300
 
 
+def _isbn_all_digits(s: str) -> bool:
+    return all(c.isdigit() or c.lower() == "x" for c in s)
+
+
 def pick_isbn(isbns: list[str]) -> str | None:
-    # pick a valid isbbn, i prefer the new 13 digits one
     cleaned = [s.replace("-", "").replace(" ", "") for s in isbns if s]
-    cleaned = [s for s in cleaned if s.isdigit() and len(s) >= 10]
+    cleaned = [s for s in cleaned if _isbn_all_digits(s) and len(s) >= 10]
     if not cleaned:
         return None
     cleaned.sort(key=len, reverse=True)
@@ -68,6 +71,11 @@ class GoogleBooksWorker:
             for biblio_id, isbns in rows:
                 isbn = pick_isbn(isbns)
                 if not isbn:
+                    await session.execute(
+                        update(Book)
+                        .where(Book.biblio_id == biblio_id)
+                        .values(metadata_synced_at=datetime.now(timezone.utc))
+                    )
                     continue
 
                 try:
