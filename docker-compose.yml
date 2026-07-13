@@ -32,8 +32,8 @@ services:
       timeout: 5s
       retries: 10
 
-  library-worker:
-    container_name: library-worker
+  library-api:
+    container_name: library-api
     
     build:
       context: .

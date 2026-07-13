@@ -1,103 +1,177 @@
 # Library App Backend
 
-FastAPI backend for a library management system. Pre-computes an efficient read model from Koha ILS via periodic sync, with PostgreSQL for storage and background workers for metadata/availability enrichment. The background workers run inside the FastAPI process as background asyncio tasks, started by the app's lifespan.
+FastAPI backend for the NITC library mobile app. It pre-computes a read-optimized
+projection of the Koha ILS into PostgreSQL via background sync workers, enriches
+book metadata (covers/descriptions) from Google Books, and caches hot reads in
+Redis. All background workers run inside the FastAPI process as asyncio tasks
+started by the app's lifespan.
+
+## Tech stack
+
+- **Python 3.10+** / FastAPI + Uvicorn
+- **PostgreSQL 16** (system of record for the app)
+- **Redis 7** (optional read cache)
+- **Koha ILS** (upstream source — only touched by background workers)
+- **Google Books API** (cover/description enrichment)
+- **Alembic** for migrations
 
 ## Prerequisites
 
-- Python 3.10+ (Dockerfile uses `python:3.10-slim`)
-- PostgreSQL (running on `localhost:5432`)
+### Option A — Docker (recommended)
+- Docker + Docker Compose
 
-## Running with Docker Compose
+### Option B — Local (host-based)
+- Python 3.10+
+- A running PostgreSQL (default `localhost:5432`, db `library_app`, user `postgres`)
+- A running Redis (default `localhost:6379`) — or set `CACHE_ENABLED=False`
+
+## 1. Configure environment
+
+Copy the example file and edit the values:
 
 ```bash
 cp .env.example .env
+```
+
+Required/important variables (all read from `.env` by `app/core/config.py`):
+
+| Variable | Purpose | Notes |
+|---|---|---|
+| `DATABASE_URL` | Async Postgres DSN | Host = `localhost` locally, `library-db` in Docker |
+| `JWT_SECRET_KEY` | Signs auth JWTs | **Required.** `openssl rand -hex 32` |
+| `CREDS_ENCRYPTION_KEY` | AES-GCM key for "remember me" | Optional; `openssl rand -hex 32` (32 bytes / 64 hex chars) |
+| `KOHA_BASE_URL` | Koha public API base | Defaults to NITC OPAC |
+| `KOHA_OPAC_URL` | Koha OPAC base (CGI auth) | Defaults to NITC OPAC |
+| `KOHA_USERNAME` / `KOHA_PASSWORD` | Koha sync credentials | Needed by the sync workers |
+| `GOOGLE_BOOKS_API_KEYS` | Comma-separated Google Books keys | For cover/description enrichment |
+| `CACHE_ENABLED` | Enable Redis caching | `True`/`False` |
+| `REDIS_URL` | Redis DSN | `redis://localhost:6379/0` locally, `redis://library-redis:6379/0` in Docker |
+| `SEED_DATA` | Start Koha sync workers | `True` to sync from Koha, `False` for pure API/testing |
+| `HOST_PORT` | Docker host port for the API | Used by compose to avoid clashing with a local server |
+
+## 2. Run with Docker (recommended)
+
+```bash
+cp .env.example .env        # then fill in JWT_SECRET_KEY etc.
 docker compose up --build
 ```
 
-This starts:
+This starts three services:
 
-- `db` (Postgres 16) on `localhost:5432`
-- `api` on `localhost:8000`
+- `library-db` (Postgres 16) on `localhost:5432`
+- `library-redis` (Redis 7) on `localhost:6379`
+- `library-api` — runs `alembic upgrade head` (via `entrypoint.sh`), then
+  `uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload`, published on
+  `${HOST_PORT:-8000}` → `8000`.
 
-The `api` service bind-mounts the project source to `/app` and runs uvicorn with `--reload`, so code edits on the host are picked up by the worker loop and the HTTP server without rebuilding the image.
+In Docker, the API service overrides `DATABASE_URL` / `REDIS_URL` to use the
+`library-db` / `library-redis` service names, so the container `.env` hostnames
+don't matter for the DB/Redis.
 
-On startup the `api` process:
+On startup the app:
+1. Runs Alembic migrations.
+2. Initializes the Redis cache.
+3. Starts background workers (availability + metadata if `SEED_DATA=True`,
+   plus metadata-cleanup and Google Books workers always).
+4. Serves HTTP on `http://localhost:8000` with `GET /health`.
 
-1. Runs `alembic upgrade head` (async engine, against the live DB).
-2. Starts the availability and metadata workers as background asyncio tasks.
-3. Exposes `GET /health`.
+### Run the Docker stack alongside a local uvicorn
 
-### Running Docker alongside local uvicorn
-
-To run the Docker stack and a local `uvicorn` dev server side-by-side, set a different host port for the API container:
+Set a different host port so the container and your local server don't collide:
 
 ```bash
-# In .env, set:
+# In .env:
 HOST_PORT=8001
 
-# Then start the stack:
-docker compose up -d          # api container on localhost:8001
-
-# In a separate terminal, run locally:
+docker compose up -d                       # API container on localhost:8001
 source venv/bin/activate
-uvicorn app.main:app --reload --port 8000   # local on localhost:8000
+uvicorn app.main:app --reload --port 8000  # local server on localhost:8000
 ```
 
-This avoids port conflicts — both servers share the same PostgreSQL and can be tested independently.
+Both share the same Postgres/Redis.
 
-### Useful docker commands
+### Useful commands
 
 ```bash
-docker compose logs -f api     # tail api logs
-docker compose down            # stop (keep data volume)
-docker compose down -v         # stop and reset DB
+docker compose logs -f library-api    # tail API/worker logs
+docker compose down                   # stop (keep data volume)
+docker compose down -v                # stop and reset the DB
 ```
 
-The compose stack uses the service name `db` as the database host inside `.env`. 
-
-## Manual setup (host-based)
+## 3. Manual / host-based setup
 
 ```bash
-# 1. Create virtual environment and activate
+# 1. Create and activate a virtual environment
 python3 -m venv venv
 source venv/bin/activate
 
-# 2. Install dependencies
+# 2. Install dependencies (PostgreSQL + Redis clients included)
 pip install -r requirements.txt
 
 # 3. Configure environment
 cp .env.example .env
-```
+#    - set DATABASE_URL to localhost
+#    - set REDIS_URL to localhost (or CACHE_ENABLED=False)
 
-## Running the app
-
-```bash
+# 4. Apply migrations
 alembic upgrade head
+
+# 5. Run the API (lifespan starts the background workers)
 uvicorn app.main:app --reload
 ```
 
-The lifespan hook will start the workers as background tasks. The API serves on `http://localhost:8000` with `/health` available. Run without --reload for sometime initially to google cover page enrichment to work
+The API serves on `http://localhost:8000` with `/health` available. Background
+workers (availability/metadata) only start when `SEED_DATA=True` — set it in
+`.env` if you want the catalog to populate from Koha.
 
-## Testing the API
+> If you want Google Books cover enrichment to backfill/populate, let the worker
+> run for a while. Running with `--reload` still works, but a single uninterrupted
+> run (no `--reload`) avoids restarting the scan loop mid-batch.
+
+## 4. Testing the API
 
 ```bash
-# Health check
 curl http://localhost:8000/health
-
-# Browse books
 curl http://localhost:8000/api/v1/books/browse
-
-# Search books
 curl "http://localhost:8000/api/v1/books/search?q=python"
-
-# Get book by biblio ID
 curl http://localhost:8000/api/v1/books/1
-
-# Search by ISBN
 curl "http://localhost:8000/api/v1/books/search/isbn?isbn=9781234567890"
 ```
-#### Or use the swagger ui: "http://localhost:8000/docs"
 
-> If running Docker on a non-default port (e.g. `HOST_PORT=8001`), replace `8000` with `8001` in the URLs above.
+Interactive docs: **http://localhost:8000/docs**
 
-See `documentation` folder for full info.
+> If the API runs on a non-default port (e.g. `HOST_PORT=8001`), replace `8000`
+> with `8001` in the URLs above.
+
+## 5. One-off scripts
+
+`scripts/seed_missing_books.py` seeds books that exist in Koha and are available
+but never appear in the `/items` browse endpoint (so the availability worker
+never discovers them). It reads a newline-separated list of biblio IDs.
+
+```bash
+# Dry run (writes CSVs, does not touch the DB)
+python -m scripts.seed_missing_books --ids-file scripts/missing_ids.txt
+
+# Commit a small live test first
+python -m scripts.seed_missing_books --ids-file scripts/missing_ids.txt --limit 5 --commit
+```
+
+## 6. Project layout
+
+```
+app/
+  main.py                 # FastAPI entrypoint + lifespan (starts workers)
+  core/                   # config, database, cache, logging
+  api/v1/                 # versioned routers (books, auth, users, ...)
+  domains/                # books, auth, users, sync, catalog, curriculum, ...
+  integrations/           # koha/, google_books/ clients
+  workers/                # enrichment (google books)
+  db/                     # models, seeds, triggers
+alembic/                  # migrations
+scripts/                  # one-off operational scripts
+documentation/            # architecture, api, auth, database, caching, ...
+```
+
+See the `documentation/` folder for full design details
+(architecture, API, auth, database schema, Redis caching, retrieval/RAG).
