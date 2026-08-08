@@ -113,6 +113,7 @@ class AvailabilityWorker:
             callnumber=item.get("callnumber"),
             acquisition_date=_parse_koha_date(item.get("acquisition_date")),
             status=self.compute_availability(item),
+            external_id=item.get("external_id"),
             last_seen_at=now,
         )
 
@@ -124,6 +125,7 @@ class AvailabilityWorker:
                 "callnumber": copy_stmt.excluded.callnumber,
                 "acquisition_date": copy_stmt.excluded.acquisition_date,
                 "status": copy_stmt.excluded.status,
+                "external_id": copy_stmt.excluded.external_id,
                 "last_seen_at": now,
             },
         )
