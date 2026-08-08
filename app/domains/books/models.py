@@ -62,6 +62,7 @@ class BookCopy(Base):
     acquisition_date: Mapped[date | None] = mapped_column(Date)
     callnumber: Mapped[str | None] = mapped_column(String(255))
     status: Mapped[str] = mapped_column(String(50), nullable=False)
+    external_id: Mapped[str | None] = mapped_column(String(255))
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),

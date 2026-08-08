@@ -16,6 +16,9 @@ class BookCopySchema(BaseModel):
     branch: str = Field(description="Branch that owns this copy (LIB or MAT)")
     callnumber: str | None = Field(default=None, description="Shelf location code")
     status: str = Field(description="Current circulation status of this copy")
+    external_id: str | None = Field(
+        default=None, description="External identifier from Koha (e.g. barcode)"
+    )
     acquisition_date: date | None = Field(
         default=None, description="Date the library acquired this copy"
     )

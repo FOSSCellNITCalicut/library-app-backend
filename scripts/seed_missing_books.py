@@ -162,6 +162,7 @@ async def build_for_biblio(
                 "branch": branch,
                 "callnumber": item.get("callnumber"),
                 "acquisition_date": _parse_koha_date(item.get("acquisition_date")),
+                "external_id": item.get("external_id"),
                 "status": worker.compute_availability(item),
                 "last_seen_at": now,
             }
@@ -260,7 +261,7 @@ def write_csvs(out_dir: Path, books: list[dict], copies: list[dict]) -> tuple[Pa
         w = csv.writer(f)
         w.writerow(
             ["item_id", "biblio_id", "branch", "callnumber",
-             "acquisition_date", "status", "last_seen_at"]
+             "acquisition_date", "status", "external_id", "last_seen_at"]
         )
         for c in copies:
             w.writerow([
@@ -270,6 +271,7 @@ def write_csvs(out_dir: Path, books: list[dict], copies: list[dict]) -> tuple[Pa
                 c["callnumber"] or "",
                 c["acquisition_date"].isoformat() if c["acquisition_date"] else "",
                 c["status"],
+                c["external_id"] or "",
                 c["last_seen_at"].isoformat(),
             ])
 
@@ -318,6 +320,7 @@ async def _upsert_copies(session, batch: list[dict]) -> None:
                 "callnumber": excl.callnumber,
                 "acquisition_date": excl.acquisition_date,
                 "status": excl.status,
+                "external_id": func.coalesce(excl.external_id, BookCopy.external_id),
                 "last_seen_at": excl.last_seen_at,
             },
         )

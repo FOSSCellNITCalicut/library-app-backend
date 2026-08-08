@@ -217,6 +217,7 @@ class BookService:
                 and db_copy.branch == branch
                 and db_copy.callnumber == callnumber
                 and db_copy.status == status
+                and db_copy.external_id == item.get("external_id")
             ):
                 continue
 
@@ -231,6 +232,7 @@ class BookService:
                 callnumber=callnumber,
                 acquisition_date=_parse_koha_date(item.get("acquisition_date")),
                 status=status,
+                external_id=item.get("external_id"),
                 last_seen_at=now,
             )
             copy_stmt = copy_stmt.on_conflict_do_update(
@@ -240,6 +242,7 @@ class BookService:
                     "callnumber": copy_stmt.excluded.callnumber,
                     "acquisition_date": copy_stmt.excluded.acquisition_date,
                     "status": copy_stmt.excluded.status,
+                    "external_id": copy_stmt.excluded.external_id,
                     "last_seen_at": now,
                 },
             )
