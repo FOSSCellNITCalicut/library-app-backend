@@ -296,3 +296,65 @@ Request → Extract token from Authorization header (Bearer scheme)
 | **Koha session expiry** | Backend detects stale CGISESSID (Koha returns login page instead of data). If stored credentials exist, auto re-authenticate and retry. Otherwise, return `401` prompting re-login. |
 | **Logout** | `POST /auth/logout` deletes the session record from the database, invalidating all tokens immediately. CGISESSID is abandoned. |
 | **Token replay** | Access tokens are short-lived. Refresh tokens use rotation + reuse detection. `jti` (unique token ID) can be added for server-side blacklisting if needed. |
+
+---
+
+## 8. Google sign-in and institutional account linking
+
+The mobile app obtains a Google ID token; the backend verifies the token
+signature, audience (`GOOGLE_OAUTH_CLIENT_ID`), expiry, verified email and the
+Google Workspace hosted-domain claim. Both the email domain and `hd` claim must
+be `nitc.ac.in`. The client never chooses whether an account is a student or
+faculty member.
+
+`POST /api/v1/auth/google/login` accepts:
+
+```json
+{"id_token": "<Google ID token>", "password": "<optional Koha password>",
+ "emp_id": "<faculty only>", "remember_me": false}
+```
+
+- Student emails matching `<name>_<rollno>@nitc.ac.in` are routed using the
+  extracted roll number. The backend first tries the roll number as both the
+  Koha username and password. A `401` with `detail.code=password_required`
+  means the app should ask for only the Koha password and retry with the same
+  Google ID token.
+- Other verified NITC addresses are routed as faculty. The API responds with
+  `428` and `detail.code=faculty_credentials_required` until both employee ID
+  and Koha password are supplied.
+- Only after Koha accepts the credentials does the backend bind the Google
+  `sub` to the institutional identity. A Google subject can be linked to only
+  one user (unique index); the Koha identity is the `users.roll_no` primary
+  key, and faculty employee IDs also have a unique constraint in `users.emp_id`.
+  For compatibility with existing Koha endpoints, the internal `roll_no` key
+  stores the Koha login ID for either user type; `emp_id` explicitly records
+  faculty identity.
+- Existing unlinked users may be linked after successful Google + Koha
+  verification. A conflicting Google subject or institutional ID returns
+  `409` and never overwrites the existing binding.
+
+The user row records `google_sub`, `is_google_verified`, `user_type`,
+`emp_id`, and `last_verified_at`. The timestamp is updated on successful
+Google verification for linked accounts and on successful account linking.
+It is a data point for future step-up checks; sensitive operations do not yet
+enforce a freshness window.
+
+### Configuration
+
+Set `GOOGLE_OAUTH_CLIENT_ID` in the backend environment to the Google OAuth web
+client ID. For Flutter web, add `http://localhost:5000` under **Authorized
+JavaScript origins** on that Web OAuth client, keep the same ID in the Flutter
+build, and allow the origin in backend `CORS_ORIGINS` (comma-separated). The
+default backend origins include `http://localhost:5000` and
+`http://127.0.0.1:5000`. Run the app on the matching origin, for example:
+
+```bash
+flutter run -d chrome --web-hostname=localhost --web-port=5000 \
+  --dart-define=GOOGLE_SERVER_CLIENT_ID=<web-client-id>.apps.googleusercontent.com
+```
+
+For native builds, configure the Android package/SHA-1 and iOS bundle ID OAuth
+clients in Google Cloud as required by `google_sign_in`. For iOS, also pass
+`--dart-define=GOOGLE_IOS_CLIENT_ID=<ios-client-id>` and configure the reversed
+iOS client ID URL scheme. Do not commit OAuth secrets or client configuration
+files. Apply the schema migration with `alembic upgrade head`.
