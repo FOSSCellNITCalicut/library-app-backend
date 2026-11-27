@@ -14,6 +14,12 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_TTL_MINUTES: int = 15
     REFRESH_TOKEN_TTL_DAYS: int = 7
 
+    # Google OAuth: web/server client ID used as the ID-token audience.
+    GOOGLE_OAUTH_CLIENT_ID: str | None = None
+
+    # Comma-separated browser origins permitted for local Flutter web testing.
+    CORS_ORIGINS: str = "http://localhost:5000,http://127.0.0.1:5000"
+
     # AES-GCM key for encrypting stored credentials (remember me)
     # Must be a 32-byte hex string (64 hex chars). Generate with: openssl rand -hex 32
     CREDS_ENCRYPTION_KEY: str | None = None  # optional; required only if remember-me is enabled

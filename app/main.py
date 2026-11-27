@@ -1,9 +1,11 @@
 import asyncio
+import json
 import logging
 from contextlib import asynccontextmanager
 
 import httpx
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.logging import configure_logging
 from app.core.config import settings
@@ -97,6 +99,28 @@ app = FastAPI(
     title="Library App Backend",
     version=__version__,
     lifespan=lifespan,
+)
+
+
+def _parse_cors_origins(value: str) -> list[str]:
+    """Accept either a JSON list or a comma-separated origins setting."""
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        parsed = None
+
+    if isinstance(parsed, list):
+        return [origin.strip() for origin in parsed if isinstance(origin, str) and origin.strip()]
+    if isinstance(parsed, str) and parsed.strip():
+        return [parsed.strip()]
+    return [origin.strip() for origin in value.split(",") if origin.strip()]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_parse_cors_origins(settings.CORS_ORIGINS),
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 from app.api.v1.router import router as api_router

@@ -9,6 +9,7 @@ import httpx
 import jwt
 from fastapi import HTTPException, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -21,6 +22,7 @@ from app.domains.auth.account_parser import (
 )
 from app.domains.auth.crypto import CredsEncryptionUnavailable, decrypt_password, encrypt_password
 from app.domains.auth.models import User
+from app.domains.auth.google_oauth import extract_student_roll_no, verify_google_id_token
 
 logger = logging.getLogger(__name__)
 
@@ -378,11 +380,12 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def create_access_token(roll_no: str, name: str) -> str:
+def create_access_token(roll_no: str, name: str, user_type: str = "student") -> str:
     payload = {
         "sub": roll_no,
         "name": name,
-        "role": "student",
+        "role": user_type,
+        "user_type": user_type,
         "type": "access",
         "iat": _now(),
         "exp": _now() + timedelta(minutes=settings.ACCESS_TOKEN_TTL_MINUTES),
@@ -445,7 +448,20 @@ def _verify_token_hash(raw_token: str, stored_hash: str) -> bool:
 # Public service functions
 # ---------------------------------------------------------------------------
 
-async def login(roll_no: str, password: str, remember_me: bool, db: AsyncSession) -> tuple[str, str, str]:
+def _encrypted_creds(password: str, remember_me: bool, roll_no: str) -> bytes | None:
+    if not remember_me:
+        return None
+    try:
+        return encrypt_password(password)
+    except CredsEncryptionUnavailable:
+        logger.warning(
+            "remember_me requested for %s but CREDS_ENCRYPTION_KEY is not configured -- skipping",
+            roll_no,
+        )
+        return None
+
+
+async def login(roll_no: str, password: str, remember_me: bool, db: AsyncSession) -> tuple[str, str, User]:
     """
     Full login flow.
 
@@ -453,7 +469,7 @@ async def login(roll_no: str, password: str, remember_me: bool, db: AsyncSession
     2. Generate access + refresh tokens.
     3. Upsert the session into the DB (one active session per user).
 
-    Returns (access_token, refresh_token, display_name).
+    Returns (access_token, refresh_token, user).
     """
     try:
         cgisessid, account = await _koha_login(roll_no, password)
@@ -463,39 +479,162 @@ async def login(roll_no: str, password: str, remember_me: bool, db: AsyncSession
     name = account.name
     email = account.email
 
+    # Update only session/profile fields. Replacing a whole row here would
+    # accidentally clear an existing Google-subject binding on legacy login.
+    result = await db.execute(select(User).where(User.roll_no == roll_no))
+    user = result.scalar_one_or_none()
+
     jti = secrets.token_urlsafe(32)
-    access_token = create_access_token(roll_no, name)
+    access_token = create_access_token(roll_no, name, user.user_type if user else "student")
     refresh_token = create_refresh_token(roll_no, jti)
-
     refresh_hash = _hash_token(jti)
+    creds_enc = _encrypted_creds(password, remember_me, roll_no)
 
-    creds_enc = None
-    if remember_me:
-        try:
-            creds_enc = encrypt_password(password)
-        except CredsEncryptionUnavailable:
-            # Server isn't configured for remember-me (CREDS_ENCRYPTION_KEY unset).
-            # Don't fail the whole login over an optional feature -- just skip it.
-            logger.warning(
-                "remember_me requested for %s but CREDS_ENCRYPTION_KEY is not configured -- skipping",
-                roll_no,
-            )
-
-    # Merge = INSERT or UPDATE. One row per user; a new login overwrites the old session.
-    user = User(
-        roll_no=roll_no,
-        cgisessid=cgisessid,
-        name=name,
-        email=email,
-        refresh_token_hash=refresh_hash,
-        creds_enc=creds_enc,
-    )
-    await db.merge(user)
+    if user is None:
+        user = User(
+            roll_no=roll_no,
+            cgisessid=cgisessid,
+            name=name,
+            email=email,
+            refresh_token_hash=refresh_hash,
+            creds_enc=creds_enc,
+        )
+        db.add(user)
+    else:
+        user.cgisessid = cgisessid
+        user.name = name
+        user.email = email
+        user.refresh_token_hash = refresh_hash
+        user.creds_enc = creds_enc
     await db.commit()
 
     # The raw refresh token (not the hash) is what the client must store and send back.
     # We embed it inside the signed JWT so the client only handles one string.
-    return access_token, refresh_token, name
+    return access_token, refresh_token, user
+
+
+async def google_login(
+    id_token: str,
+    emp_id: str | None,
+    password: str | None,
+    remember_me: bool,
+    db: AsyncSession,
+) -> tuple[str, str, User]:
+    """Authenticate a verified NITC Google identity against Koha and bind it.
+
+    Students are first tried with their roll number as the Koha password. A
+    ``password_required`` 401 tells the app to ask only for a password. Faculty
+    must provide an employee ID and Koha password.
+    """
+    claims = verify_google_id_token(id_token)
+    google_sub = claims["sub"]
+    email = claims["email"]
+    student_roll_no = extract_student_roll_no(email)
+    user_type = "student" if student_roll_no else "faculty"
+
+    # Record every successful Google re-verification for already-linked users,
+    # including a valid verification that is followed by a Koha credential prompt.
+    linked_result = await db.execute(select(User).where(User.google_sub == google_sub))
+    linked_user = linked_result.scalar_one_or_none()
+    if linked_user is not None:
+        linked_user.last_verified_at = _now()
+        await db.commit()
+
+    if student_roll_no:
+        koha_user_id = student_roll_no
+        koha_password = password if password is not None else student_roll_no
+        faculty_emp_id = None
+    else:
+        if not emp_id or not emp_id.strip() or password is None:
+            raise HTTPException(
+                status_code=428,
+                detail={"code": "faculty_credentials_required", "user_type": "faculty"},
+            )
+        koha_user_id = emp_id.strip()
+        faculty_emp_id = koha_user_id
+        koha_password = password
+
+    try:
+        cgisessid, account = await _koha_login(koha_user_id, koha_password)
+    except KohaAuthError as exc:
+        if student_roll_no and password is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={"code": "password_required", "user_type": "student"},
+            ) from exc
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"code": "invalid_credentials", "user_type": user_type},
+        ) from exc
+
+    # Enforce both directions of the permanent 1:1 binding before writing:
+    # Google sub -> one Koha identity, and institutional ID -> one Google sub.
+    existing_result = await db.execute(select(User).where(User.roll_no == koha_user_id))
+    user = existing_result.scalar_one_or_none()
+    if linked_user is not None and linked_user.roll_no != koha_user_id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This Google account is already linked to a different institutional account",
+        )
+    if user is not None and user.google_sub not in (None, google_sub):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This institutional account is already linked to another Google account",
+        )
+    if user is not None and user.user_type != user_type:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Institutional account type does not match the verified email",
+        )
+
+    jti = secrets.token_urlsafe(32)
+    access_token = create_access_token(koha_user_id, account.name, user_type)
+    refresh_token = create_refresh_token(koha_user_id, jti)
+    refresh_hash = _hash_token(jti)
+    creds_enc = _encrypted_creds(koha_password, remember_me, koha_user_id)
+
+    if user is None:
+        user = User(
+            roll_no=koha_user_id,
+            emp_id=faculty_emp_id,
+            cgisessid=cgisessid,
+            name=account.name,
+            email=email,
+            creds_enc=creds_enc,
+            refresh_token_hash=refresh_hash,
+            google_sub=google_sub,
+            is_google_verified=True,
+            user_type=user_type,
+            last_verified_at=_now(),
+        )
+        db.add(user)
+    else:
+        if user.user_type == "faculty" and user.emp_id not in (None, faculty_emp_id):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Employee ID does not match the linked institutional account",
+            )
+        user.emp_id = faculty_emp_id
+        user.cgisessid = cgisessid
+        user.name = account.name
+        user.email = email
+        user.creds_enc = creds_enc
+        user.refresh_token_hash = refresh_hash
+        user.google_sub = google_sub
+        user.is_google_verified = True
+        user.user_type = user_type
+        user.last_verified_at = _now()
+
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This Google or institutional identity is already linked to another account",
+        ) from exc
+
+    return access_token, refresh_token, user
 
 
 async def refresh(refresh_token_str: str, db: AsyncSession) -> tuple[str, str]:
@@ -536,7 +675,7 @@ async def refresh(refresh_token_str: str, db: AsyncSession) -> tuple[str, str]:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh token already used")
 
     new_jti = secrets.token_urlsafe(32)
-    new_access_token = create_access_token(roll_no, user.name)
+    new_access_token = create_access_token(roll_no, user.name, user.user_type)
     new_refresh_token = create_refresh_token(roll_no, new_jti)
 
     user.refresh_token_hash = _hash_token(new_jti)

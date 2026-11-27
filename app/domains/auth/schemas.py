@@ -7,9 +7,19 @@ class LoginRequest(BaseModel):
     remember_me: bool = False
 
 
+class GoogleLoginRequest(BaseModel):
+    id_token: str = Field(..., min_length=1)
+    emp_id: str | None = None
+    password: str | None = None
+    remember_me: bool = False
+
+
 class UserInfo(BaseModel):
     roll_no: str
     name: str
+    user_type: str = "student"
+    emp_id: str | None = None
+    is_google_verified: bool = False
 
 
 class LoginResponse(BaseModel):
